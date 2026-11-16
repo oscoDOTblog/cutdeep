@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "skills": {
+    "sao-ux-web": {
+      "source": "oscoDOTblog/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sao-ux-web/SKILL.md",
+      "computedHash": "af9215bf481ced487ed5c2b5aeb37add2b07b18f0778de56271b3c505e5cb9fc"
+    }
+  }
+}

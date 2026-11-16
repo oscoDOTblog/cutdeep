@@ -1,0 +1,27 @@
+services:
+  web:
+    build: ./web
+    ports: ["3000:3000"]
+    environment:
+      FP_API_URL: http://fp-api:8000
+      DB_PATH: /data/meta.db
+    volumes: ["db:/data", "tmp-clips:/tmp/clips"]
+    depends_on: [fp-api]
+
+  fp-api:
+    build: ./fp-api
+    expose: ["8000"]
+    volumes: ["index:/index", "tmp-clips:/tmp/clips", "db:/data"]
+    environment:
+      DB_PATH: /data/meta.db
+
+  worker:
+    build: ./fp-api
+    command: ["python", "worker.py"]
+    volumes: ["db:/data", "index:/index", "./music:/music:ro"]
+    environment:
+      DB_PATH: /data/meta.db
+      MUSIC_DIR: /music
+      POLL_SECS: "30"
+
+volumes: { db: {}, index: {}, tmp-clips: {} }

@@ -1,0 +1,10 @@
+fp-api/.venv/
+web/node_modules/
+web/.next/
+music/*.wav
+music/*.mp3
+music/*.m4a
+music/*.flac
+music/*.ogg
+music/*.opus
+music/*.done

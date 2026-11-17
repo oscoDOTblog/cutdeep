@@ -1,83 +1,33 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-
-type Candidate = {
-  track_id: number;
-  title: string;
-  artist: string;
-  source_url: string;
-  votes: number;
-  confidence: number;
-};
-
-type HistoryEntry = { ts: number; top: string; conf: number };
+import Link from "next/link";
+import LinkStart from "./components/LinkStart";
+import ResultCard from "./components/ResultCard";
+import { identifyClip } from "./lib/api";
+import { saveScan, type Candidate } from "./lib/scans";
 
 const CLIP_SECS = 10;
 
+type Phase = "idle" | "listening" | "matching" | "done";
+
 export default function Home() {
-  const [recording, setRecording] = useState(false);
-  const [matching, setMatching] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [secs, setSecs] = useState(0);
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [searched, setSearched] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [link, setLink] = useState({ title: "", artist: "", source_url: "", note: "" });
-  const [linkMsg, setLinkMsg] = useState("");
-  const [fileName, setFileName] = useState("");
   const recRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cancelledRef = useRef(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("cutdeep-history");
-      if (raw) setHistory(JSON.parse(raw));
-    } catch {
-      /* corrupted history is not fatal */
-    }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  function pushHistory(top: string, conf: number) {
-    const entry = { ts: Date.now(), top, conf };
-    const next = [entry, ...history].slice(0, 20);
-    setHistory(next);
-    try {
-      localStorage.setItem("cutdeep-history", JSON.stringify(next));
-    } catch {
-      setError("History could not be saved (browser storage unavailable).");
-    }
-  }
-
-  async function identify(blob: Blob, name: string) {
-    setError("");
-    setSearched(false);
-    setMatching(true);
-    const fd = new FormData();
-    fd.append("file", blob, name);
-    let res: Response;
-    try {
-      res = await fetch("/api/identify", { method: "POST", body: fd });
-    } catch {
-      setError("Could not reach the matching service.");
-      setMatching(false);
-      return;
-    }
-    if (!res.ok) {
-      setError("Match failed. Try a louder, closer clip.");
-      setMatching(false);
-      return;
-    }
-    const data = await res.json();
-    setCandidates(data.candidates ?? []);
-    setSearched(true);
-    setMatching(false);
-    const top = (data.candidates ?? [])[0] as Candidate | undefined;
-    pushHistory(top ? `${top.title} — ${top.artist}` : "no match", top?.confidence ?? 0);
+  function stopTracks() {
+    recRef.current?.stream.getTracks().forEach((t) => t.stop());
   }
 
   function stopTimer() {
@@ -87,19 +37,15 @@ export default function Home() {
     }
   }
 
-  async function toggleRecord() {
-    if (recording) {
-      recRef.current?.stop();
-      return;
-    }
+  async function startListen() {
     setError("");
     setCandidates([]);
-    setSearched(false);
+    cancelledRef.current = false;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setError("Microphone blocked. Allow mic access or upload a file instead.");
+      setError("Microphone blocked. Allow mic access or use the Upload tab instead.");
       return;
     }
     const rec = new MediaRecorder(stream);
@@ -107,47 +53,52 @@ export default function Home() {
     rec.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
     };
-    rec.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      setRecording(false);
+    rec.onstop = async () => {
+      stopTracks();
       stopTimer();
+      if (cancelledRef.current) {
+        setPhase("idle");
+        setSecs(0);
+        return;
+      }
       const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-      identify(blob, "clip.webm");
+      setPhase("matching");
+      try {
+        const found = await identifyClip(blob, "clip.webm");
+        setCandidates(found);
+        const top = found[0];
+        if (top) {
+          saveScan({
+            ts: Date.now(),
+            title: top.title,
+            artist: top.artist,
+            sourceUrl: top.source_url,
+            conf: top.confidence,
+            votes: top.votes,
+          });
+        }
+      } catch {
+        setError("Could not reach the matching service.");
+        setCandidates([]);
+      }
+      setPhase("done");
     };
     recRef.current = rec;
     rec.start();
-    setRecording(true);
+    setPhase("listening");
     setSecs(0);
-    setStatus("Listening… 0s");
     timerRef.current = setInterval(() => {
       setSecs((s) => {
         const n = s + 1;
-        setStatus(`Listening… ${n}s`);
         if (n >= CLIP_SECS) rec.stop();
         return n;
       });
     }, 1000);
   }
 
-  async function uploadFile(f: File) {
-    setCandidates([]);
-    await identify(f, f.name);
-  }
-
-  async function submitLink(e: React.FormEvent) {
-    e.preventDefault();
-    setLinkMsg("");
-    const res = await fetch("/api/submit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(link),
-    });
-    if (!res.ok) {
-      setLinkMsg("Could not save. Include at least a title.");
-      return;
-    }
-    setLink({ title: "", artist: "", source_url: "", note: "" });
-    setLinkMsg("Saved. It will be reviewed for the catalog.");
+  function cancel() {
+    cancelledRef.current = true;
+    recRef.current?.stop();
   }
 
   return (
@@ -160,132 +111,68 @@ export default function Home() {
         <p>Hold it up during the battle. Get the remix, not the original.</p>
       </div>
 
-      <section>
-        <button className={recording ? "btn-amber live" : "btn-amber"} onClick={toggleRecord}>
-          {recording ? `Stop — ${secs}s` : "◆ Record 10s"}
-        </button>
-        {matching ? (
-          <div className="linkstart" role="status" aria-label="Linking to catalog">
-            <div className="diamonds" aria-hidden="true">
-              <span>◆</span>
-              <span>◆</span>
-              <span>◆</span>
-            </div>
-            <div className="words">Link start</div>
-            <div className="groove" aria-hidden="true">
-              <i />
-            </div>
-          </div>
-        ) : (
-          <div className="status">{status}</div>
-        )}
-        {error && <div className="err">{error}</div>}
-        <div className="upload">
-          <div className="divider" aria-hidden="true">
-            <span>or upload a clip instead</span>
-          </div>
-          <span className="file-wrap">
-            <span className="file-btn" aria-hidden="true">
-              ◆ Choose audio file
-            </span>
-            <input
-              type="file"
-              accept="audio/*"
-              aria-label="Choose audio file"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  setFileName(f.name);
-                  uploadFile(f);
-                }
-              }}
-            />
-          </span>
-          {fileName && <span className="file-name">◆ {fileName}</span>}
-        </div>
-      </section>
-
-      {searched && (
-        <section>
-          {candidates.length === 0 ? (
-            <p className="status">No match in the catalog yet. Add the link below.</p>
-          ) : (
-            candidates.map((c) => {
-              const pct = Math.round(c.confidence * 100);
-              const band = c.confidence >= 0.75 ? "high" : c.confidence >= 0.4 ? "mid" : "low";
-              return (
-                <div className="card" key={c.track_id}>
-                  <div className="t">
-                    <span className="dia">◆</span> {c.title}
-                  </div>
-                  {c.artist && <div className="a">{c.artist}</div>}
-                  <div className={`hp ${band}`} aria-hidden="true">
-                    <i style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="meta">
-                    {pct}% · {c.votes} landmark votes
-                    {c.source_url && (
-                      <>
-                        {" · "}
-                        <a href={c.source_url} target="_blank" rel="noreferrer">
-                          source
-                        </a>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
+      {phase === "idle" && (
+        <section className="dial-stage">
+          <button className="dial" onClick={startListen} aria-label="Tap to identify music">
+            ◆
+          </button>
+          <div className="dial-label">Tap to cutdeep</div>
+          <div className="dial-sub">{error || "10 second listen"}</div>
         </section>
       )}
 
-      <section>
-        <h2 className="sec">
-          <span className="dia">◆</span> Know this remix? Add the link
-        </h2>
-        <form className="grid" onSubmit={submitLink}>
-          <input
-            placeholder="Title (required)"
-            value={link.title}
-            onChange={(e) => setLink({ ...link, title: e.target.value })}
-          />
-          <input
-            placeholder="Artist / DJ"
-            value={link.artist}
-            onChange={(e) => setLink({ ...link, artist: e.target.value })}
-          />
-          <input
-            placeholder="SoundCloud / YouTube / Bandcamp URL"
-            value={link.source_url}
-            onChange={(e) => setLink({ ...link, source_url: e.target.value })}
-          />
-          <textarea
-            placeholder="Where did you hear it? (battle, round, DJ…)"
-            rows={2}
-            value={link.note}
-            onChange={(e) => setLink({ ...link, note: e.target.value })}
-          />
-          <button className="secondary" type="submit">
-            Submit link
+      {phase === "listening" && (
+        <section className="listen-stage">
+          <button className="x-btn" onClick={cancel} aria-label="Cancel listening">
+            ✕
           </button>
-        </form>
-        {linkMsg && <div className="status">{linkMsg}</div>}
-      </section>
+          <div className="rings" aria-hidden="true">
+            <span className="ring" />
+            <span className="ring" />
+            <span className="ring" />
+            <span className="ring-core">◆</span>
+          </div>
+          <div className="listen-words" role="status">
+            Listening… {secs}s
+          </div>
+          <div className="listen-tip">Make sure your device can hear the song clearly</div>
+        </section>
+      )}
 
-      {history.length > 0 && (
-        <section className="hist">
-          <h2 className="sec">
-          <span className="dia">◆</span> Recent
-        </h2>
-          <ul>
-            {history.map((h) => (
-              <li key={h.ts}>
-                {new Date(h.ts).toLocaleString()} — {h.top}
-                {h.conf > 0 && ` (${Math.round(h.conf * 100)}%)`}
-              </li>
-            ))}
-          </ul>
+      {phase === "matching" && (
+        <section>
+          <LinkStart />
+        </section>
+      )}
+
+      {phase === "done" && (
+        <section>
+          {candidates.length === 0 ? (
+            <p className="status">
+              No match in the catalog yet.{" "}
+              <Link href="/upload">Add the link</Link> or try a louder clip.
+            </p>
+          ) : (
+            candidates.map((c) => (
+              <ResultCard
+                key={c.track_id}
+                title={c.title}
+                artist={c.artist}
+                sourceUrl={c.source_url}
+                conf={c.confidence}
+                votes={c.votes}
+              />
+            ))
+          )}
+          <button
+            className="secondary scan-again"
+            onClick={() => {
+              setCandidates([]);
+              setPhase("idle");
+            }}
+          >
+            Scan again
+          </button>
         </section>
       )}
     </>

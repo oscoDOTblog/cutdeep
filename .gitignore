@@ -1,3 +1,4 @@
+.DS_Store
 fp-api/.venv/
 web/node_modules/
 web/.next/

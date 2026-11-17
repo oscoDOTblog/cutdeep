@@ -246,7 +246,156 @@ button.secondary:focus-visible {
   color: var(--sao-page-muted);
 }
 
+/* Bottom tab bar */
+.tabbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(30, 32, 36, 0.96);
+  border-top: 1px solid var(--sao-dark-line);
+  z-index: 10;
+}
+.tab {
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-hud);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--sao-page-muted);
+  text-decoration: none;
+  padding: 12px 4px;
+  min-height: 44px;
+  border-radius: 9999px;
+  border: 1px solid var(--sao-dark-line);
+}
+.tab.active {
+  background: var(--sao-amber);
+  border-color: var(--sao-amber);
+  color: var(--sao-amber-ink);
+}
+.tab:focus-visible {
+  outline: 3px solid var(--sao-amber);
+  outline-offset: 2px;
+}
+main { padding-bottom: 110px; }
+
+/* Home: dial record button */
+.dial-stage { display: grid; justify-items: center; padding: 24px 0 8px; }
+.dial {
+  width: 208px;
+  height: 208px;
+  border-radius: 50%;
+  border: 3px solid var(--sao-amber);
+  background: radial-gradient(circle at 50% 38%, #26282e, var(--sao-dark-panel));
+  color: var(--sao-amber);
+  font-size: 64px;
+  cursor: pointer;
+  min-height: 44px;
+}
+.dial:hover { background: radial-gradient(circle at 50% 38%, #2e3036, var(--sao-dark-panel)); }
+.dial:focus-visible { filter: drop-shadow(0 0 10px var(--sao-amber)); outline: none; }
+.dial-label {
+  margin-top: 18px;
+  font-family: var(--font-hud);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 20px;
+  font-weight: 700;
+  color: #ece5d8;
+}
+.dial-sub { margin-top: 6px; font-size: 14px; color: var(--sao-page-faint); }
+
+/* Listening rings */
+.listen-stage { display: grid; justify-items: center; padding: 8px 0; position: relative; }
+.rings { position: relative; width: 248px; height: 248px; display: grid; place-items: center; }
+.ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(245, 168, 0, 0.55);
+  animation: ringout 2.4s infinite linear;
+}
+.ring:nth-child(2) { animation-delay: 0.8s; }
+.ring:nth-child(3) { animation-delay: 1.6s; }
+@keyframes ringout {
+  from { width: 96px; height: 96px; opacity: 0.9; }
+  to { width: 248px; height: 248px; opacity: 0; }
+}
+.ring-core {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--sao-amber);
+  color: var(--sao-amber-ink);
+  font-size: 36px;
+  display: grid;
+  place-items: center;
+}
+.listen-words {
+  margin-top: 14px;
+  font-family: var(--font-hud);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 18px;
+  color: #ece5d8;
+}
+.listen-tip { margin-top: 6px; font-size: 14px; color: var(--sao-page-faint); text-align: center; }
+.x-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--sao-dark-line);
+  background: var(--sao-dark-panel);
+  color: #ece5d8;
+  font-size: 20px;
+  cursor: pointer;
+}
+
+/* Result rows + search */
+.card.row { display: flex; gap: 14px; align-items: center; }
+.rowbody { flex: 1; min-width: 0; }
+.tile {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  color: var(--sao-amber-ink);
+  background: linear-gradient(135deg, var(--sao-amber), var(--sao-rail-deep));
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.search-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.search-row input { flex: 1; }
+.search-row button {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 18px;
+  font-family: var(--font-hud);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--sao-amber-ink);
+  background: var(--sao-amber);
+  border: none;
+  cursor: pointer;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.search-row button:focus-visible { filter: drop-shadow(0 0 6px var(--sao-amber)); outline: none; }
+.empty { color: var(--sao-page-faint); font-size: 14px; }
+.scan-again { margin-top: 4px; }
+
 @media (prefers-reduced-motion: reduce) {
+  .ring { animation: none; opacity: 0.35; }
   .btn-amber.live, .linkstart .words { animation: none; }
   .linkstart .diamonds span { animation: none; opacity: 1; }
   .linkstart .groove i { animation: none; width: 55%; margin-left: 0; }

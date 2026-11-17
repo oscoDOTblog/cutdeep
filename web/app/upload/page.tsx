@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ResultCard from "../components/ResultCard";
 import TileIcon from "../components/TileIcon";
-import { identifyClip } from "../lib/api";
+import { apiError, identifyClip, readJson } from "../lib/api";
 import type { Candidate } from "../lib/scans";
 
 type Meta = { title: string; artist: string; thumbnail: string; duration: number; source_url: string };
@@ -14,6 +14,7 @@ type Job = {
   track_id?: number;
   title?: string;
   artist?: string;
+  cover_url?: string;
   error?: string;
 };
 
@@ -35,6 +36,7 @@ export default function Upload() {
   const [linkArtist, setLinkArtist] = useState("");
   const [linkError, setLinkError] = useState("");
   const [job, setJob] = useState<Job | null>(null);
+  const [suggestMsg, setSuggestMsg] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -80,8 +82,8 @@ export default function Upload() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: u }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Could not load details");
+      const { ok, data } = await readJson(res);
+      if (!ok) throw new Error(apiError(data, "Could not load details"));
       setMeta(data);
       setLinkTitle(data.title || "");
       setLinkArtist(data.artist || "");
@@ -101,17 +103,18 @@ export default function Upload() {
       const res = await fetch("/api/link/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: u, title: linkTitle, artist: linkArtist }),
+        body: JSON.stringify({ url: u, title: linkTitle, artist: linkArtist, thumbnail: meta?.thumbnail ?? "" }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Could not start import");
-      const jobId = data.job_id as string;
+      const started = await readJson(res);
+      if (!started.ok) throw new Error(apiError(started.data, "Could not start import"));
+      const jobId = started.data.job_id as string;
       setJob({ job_id: jobId, status: "queued", progress: 0 });
       pollRef.current = setInterval(async () => {
         try {
           const r = await fetch(`/api/link/jobs/${jobId}`);
-          if (!r.ok) return;
-          const j = (await r.json()) as Job;
+          const { ok, data } = await readJson(r);
+          if (!ok) return;
+          const j = data as Job;
           setJob(j);
           if (j.status === "done" || j.status === "failed") {
             if (pollRef.current) clearInterval(pollRef.current);
@@ -179,6 +182,37 @@ export default function Upload() {
             </button>
           </div>
           {linkError && <div className="err">{linkError}</div>}
+          {linkError && url.trim() && (
+            <>
+              <button
+                type="button"
+                className="secondary"
+                onClick={async () => {
+                  setSuggestMsg("");
+                  try {
+                    const res = await fetch("/api/submit", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        title: linkTitle || url.trim(),
+                        artist: linkArtist,
+                        source_url: url.trim(),
+                        note: "suggested after failed fetch",
+                      }),
+                    });
+                    const { ok, data } = await readJson(res);
+                    if (!ok) throw new Error(apiError(data, "Could not save suggestion"));
+                    setSuggestMsg("Saved for review. Thanks.");
+                  } catch (e) {
+                    setSuggestMsg(e instanceof Error ? e.message : "Could not save suggestion.");
+                  }
+                }}
+              >
+                ◆ Suggest this link for review instead
+              </button>
+              {suggestMsg && <div className="status">{suggestMsg}</div>}
+            </>
+          )}
 
           {meta && (
             <section className="card">
@@ -225,6 +259,7 @@ export default function Upload() {
                   conf={1}
                   votes={0}
                   extra="freshly imported"
+                  coverUrl={job.cover_url}
                 />
               )}
             </section>
@@ -272,6 +307,7 @@ export default function Upload() {
                     sourceUrl={c.source_url}
                     conf={c.confidence}
                     votes={c.votes}
+                    coverUrl={c.cover_url}
                   />
                 ))
               )}

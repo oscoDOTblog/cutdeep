@@ -5,16 +5,22 @@ type Props = {
   conf: number;
   votes: number;
   extra?: string;
+  coverUrl?: string;
 };
 
-export default function ResultCard({ title, artist, sourceUrl, conf, votes, extra }: Props) {
+export default function ResultCard({ title, artist, sourceUrl, conf, votes, extra, coverUrl }: Props) {
   const pct = Math.round(conf * 100);
   const band = conf >= 0.75 ? "high" : conf >= 0.4 ? "mid" : "low";
   return (
     <div className="card row">
-      <div className="tile" aria-hidden="true">
-        ◆
-      </div>
+      {coverUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={coverUrl} alt="" className="tile-img" />
+      ) : (
+        <div className="tile" aria-hidden="true">
+          ◆
+        </div>
+      )}
       <div className="rowbody">
         <div className="t">
           <span className="dia">◆</span> {title}

@@ -78,6 +78,9 @@ parse that also accepts the old `{top, conf}` history shape. Shared
   step; this matches the local-first plan.
 - Mic permission denial must land back on idle with the upload hint.
 - No artwork service exists; ◆ tiles stand in until source thumbnails do.
+- Covers: link imports save thumbnails to local `covers` volume (`COVER_DIR`),
+  served at `/api/covers/`. S3 migration is a later step (swap `COVER_DIR`
+  handling for object storage + CDN URLs).
 - `song-info.PNG` detail view is out of scope; top result links straight
   to the external source for now.
 

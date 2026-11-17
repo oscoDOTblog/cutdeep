@@ -5,8 +5,10 @@ import tempfile
 from pathlib import Path
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.staticfiles import StaticFiles
 
 import link_import
 import store
@@ -21,6 +23,9 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
 
 app = FastAPI(title="cutdeep fp-api", lifespan=lifespan)
+
+Path(store.COVER_DIR).mkdir(parents=True, exist_ok=True)
+app.mount("/covers", StaticFiles(directory=store.COVER_DIR), name="covers")
 
 
 @app.get("/health")
@@ -85,7 +90,9 @@ async def link_import_start(payload: dict) -> dict:
     url = (payload.get("url") or "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
-    job_id = link_import.start_import(url, payload.get("title", ""), payload.get("artist", ""))
+    job_id = link_import.start_import(url, payload.get("title", ""),
+                                       payload.get("artist", ""),
+                                       payload.get("thumbnail", ""))
     return {"job_id": job_id}
 
 

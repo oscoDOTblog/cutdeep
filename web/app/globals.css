@@ -421,6 +421,14 @@ main { padding-bottom: 110px; }
 .tile-card:hover { filter: drop-shadow(0 0 8px rgba(245, 168, 0, 0.55)); }
 .tile-card:focus-visible { filter: drop-shadow(0 0 8px var(--sao-amber)); outline: none; }
 .tile-glyph { font-size: 28px; color: var(--sao-amber-deep); }
+.tile-img {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--sao-line);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
 .tile-title {
   font-family: var(--font-hud);
   text-transform: uppercase;

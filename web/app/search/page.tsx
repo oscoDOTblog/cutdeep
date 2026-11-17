@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ResultCard from "../components/ResultCard";
+import { apiError, readJson } from "../lib/api";
 import type { Candidate } from "../lib/scans";
 
 export default function Search() {
@@ -19,12 +20,12 @@ export default function Search() {
     setError("");
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error();
-      const data = await res.json();
+      const { ok, data } = await readJson(res);
+      if (!ok) throw new Error(apiError(data, "Search failed"));
       setResults((data.results ?? []) as Candidate[]);
       setSearched(true);
-    } catch {
-      setError("Search failed. Is the catalog service up?");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Search failed. Is the catalog service up?");
     } finally {
       setBusy(false);
     }
@@ -57,6 +58,7 @@ export default function Search() {
           sourceUrl={c.source_url}
           conf={c.confidence ?? 1}
           votes={c.votes ?? 0}
+          coverUrl={c.cover_url}
         />
       ))}
     </>

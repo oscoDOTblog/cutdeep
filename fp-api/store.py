@@ -11,6 +11,14 @@ from pathlib import Path
 from fingerprint import fingerprint_file
 
 DB_PATH = os.environ.get("DB_PATH", "/data/meta.db")
+COVER_DIR = os.environ.get("COVER_DIR", "/data/covers")
+
+
+def cover_url(track_id: int) -> str:
+    """Public cover path, or empty when no cover is stored locally."""
+    if Path(COVER_DIR, f"{track_id}.jpg").exists():
+        return f"/api/covers/{track_id}.jpg"
+    return ""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tracks (
@@ -105,7 +113,8 @@ def match(hashes: list[tuple[int, int]], top_n: int = 5, min_votes: int = 5) -> 
             if row:
                 out.append({"track_id": row[0], "title": row[1], "artist": row[2],
                             "source_url": row[3], "votes": votes,
-                            "confidence": round(conf, 3)})
+                            "confidence": round(conf, 3),
+                            "cover_url": cover_url(row[0])})
         return out
     finally:
         conn.close()
@@ -119,7 +128,8 @@ def search_tracks(q: str, limit: int = 20) -> list[dict]:
             "WHERE title LIKE ? OR artist LIKE ? ORDER BY id DESC LIMIT ?",
             (f"%{q}%", f"%{q}%", limit),
         ).fetchall()
-        return [{"track_id": r[0], "title": r[1], "artist": r[2], "source_url": r[3]} for r in rows]
+        return [{"track_id": r[0], "title": r[1], "artist": r[2], "source_url": r[3],
+                 "cover_url": cover_url(r[0])} for r in rows]
     finally:
         conn.close()
 

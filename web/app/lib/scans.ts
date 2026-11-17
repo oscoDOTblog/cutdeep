@@ -5,6 +5,7 @@ export type Scan = {
   sourceUrl: string;
   conf: number;
   votes: number;
+  coverUrl: string;
 };
 
 export type Candidate = {
@@ -14,6 +15,7 @@ export type Candidate = {
   source_url: string;
   votes: number;
   confidence: number;
+  cover_url?: string;
 };
 
 const LIB_KEY = "cutdeep-library";
@@ -32,6 +34,7 @@ function toScan(raw: unknown): Scan | null {
       sourceUrl: "",
       conf: typeof r.conf === "number" ? r.conf : 0,
       votes: 0,
+      coverUrl: "",
     };
   }
   if (typeof r.title !== "string" || typeof r.ts !== "number") return null;
@@ -42,6 +45,7 @@ function toScan(raw: unknown): Scan | null {
     sourceUrl: typeof r.sourceUrl === "string" ? r.sourceUrl : "",
     conf: typeof r.conf === "number" ? r.conf : 0,
     votes: typeof r.votes === "number" ? r.votes : 0,
+    coverUrl: typeof r.coverUrl === "string" ? r.coverUrl : "",
   };
 }
 

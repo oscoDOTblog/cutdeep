@@ -31,7 +31,34 @@ def fetch_metadata(url: str) -> dict:
     }
 
 
-def _run(job_id: str, url: str, title: str, artist: str) -> None:
+def save_cover(track_id: int, thumb_url: str) -> str:
+    """Download a thumbnail and normalize it to a local jpg. Never fatal."""
+    import subprocess
+    import urllib.request
+
+    if not thumb_url:
+        return ""
+    try:
+        Path(store.COVER_DIR).mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(thumb_url, headers={"User-Agent": "Mozilla/5.0"})
+        with tempfile.NamedTemporaryFile(suffix=".img", delete=False) as tmp:
+            tmp.write(urllib.request.urlopen(req, timeout=20).read())
+            src = tmp.name
+        try:
+            dest = str(Path(store.COVER_DIR, f"{track_id}.jpg"))
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-i", src,
+                 "-vf", "scale=512:-1", "-q:v", "4", dest],
+                check=True, timeout=30,
+            )
+            return store.cover_url(track_id)
+        finally:
+            Path(src).unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001 - a missing cover never fails the import
+        return ""
+
+
+def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "") -> None:
     import yt_dlp
 
     job = JOBS[job_id]
@@ -65,7 +92,9 @@ def _run(job_id: str, url: str, title: str, artist: str) -> None:
         name = title or info.get("title") or "untitled"
         who = artist or info.get("artist") or info.get("uploader") or ""
         res = store.ingest_file(str(files[0]), name, who, url)
-        job.update(status="done", track_id=res["track_id"], title=name, artist=who)
+        cover = save_cover(res["track_id"], thumb_url or info.get("thumbnail") or "")
+        job.update(status="done", track_id=res["track_id"], title=name, artist=who,
+                   cover_url=cover)
     except Exception as e:  # noqa: BLE001 - surfaced to the poller
         job.update(status="failed", error=str(e)[:300])
     finally:
@@ -74,7 +103,7 @@ def _run(job_id: str, url: str, title: str, artist: str) -> None:
         Path(tmpdir).rmdir()
 
 
-def start_import(url: str, title: str = "", artist: str = "") -> str:
+def start_import(url: str, title: str = "", artist: str = "", thumb_url: str = "") -> str:
     job_id = uuid.uuid4().hex[:12]
     JOBS[job_id] = {
         "job_id": job_id,
@@ -82,7 +111,7 @@ def start_import(url: str, title: str = "", artist: str = "") -> str:
         "progress": 0.0,
         "created_at": time.time(),
     }
-    _pool.submit(_run, job_id, url, title, artist)
+    _pool.submit(_run, job_id, url, title, artist, thumb_url)
     return job_id
 
 

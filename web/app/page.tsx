@@ -75,6 +75,7 @@ export default function Home() {
             sourceUrl: top.source_url,
             conf: top.confidence,
             votes: top.votes,
+            coverUrl: top.cover_url ?? "",
           });
         }
       } catch {
@@ -161,6 +162,7 @@ export default function Home() {
                 sourceUrl={c.source_url}
                 conf={c.confidence}
                 votes={c.votes}
+                coverUrl={c.cover_url}
               />
             ))
           )}

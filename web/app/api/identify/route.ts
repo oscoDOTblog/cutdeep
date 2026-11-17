@@ -1,11 +1,19 @@
-const FP = process.env.FP_API_URL ?? "http://localhost:8000";
+import { fpUrl, proxyJson } from "../_proxy";
 
 export async function POST(req: Request) {
   const form = await req.formData();
-  const upstream = await fetch(`${FP}/identify`, { method: "POST", body: form });
-  const body = await upstream.text();
-  return new Response(body, {
-    status: upstream.status,
-    headers: { "Content-Type": "application/json" },
-  });
+  const target = fpUrl("/identify");
+  try {
+    const upstream = await fetch(target, { method: "POST", body: form });
+    const text = await upstream.text();
+    return new Response(text || '{"detail":"empty reply from matching service"}', {
+      status: upstream.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch {
+    return Response.json(
+      { detail: "matching service unreachable — is fp-api running?" },
+      { status: 502 }
+    );
+  }
 }

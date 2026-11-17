@@ -65,6 +65,7 @@ export default function Library() {
               conf={s.conf}
               votes={s.votes}
               extra={new Date(s.ts).toLocaleString()}
+              coverUrl={s.coverUrl}
             />
           ))}
         </section>

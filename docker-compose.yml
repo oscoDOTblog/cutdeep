@@ -11,9 +11,10 @@ services:
   fp-api:
     build: ./fp-api
     expose: ["8000"]
-    volumes: ["index:/index", "tmp-clips:/tmp/clips", "db:/data"]
+    volumes: ["index:/index", "tmp-clips:/tmp/clips", "db:/data", "covers:/data/covers"]
     environment:
       DB_PATH: /data/meta.db
+      COVER_DIR: /data/covers
 
   worker:
     build: ./fp-api
@@ -24,4 +25,4 @@ services:
       MUSIC_DIR: /music
       POLL_SECS: "30"
 
-volumes: { db: {}, index: {}, tmp-clips: {} }
+volumes: { db: {}, index: {}, tmp-clips: {}, covers: {} }

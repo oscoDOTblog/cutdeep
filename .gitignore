@@ -1,5 +1,6 @@
 .DS_Store
 fp-api/.venv/
+fp-api/__pycache__/
 web/node_modules/
 web/.next/
 music/*.wav

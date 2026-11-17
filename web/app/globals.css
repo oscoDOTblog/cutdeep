@@ -21,7 +21,8 @@
   --font-hud: "Arial Narrow", "HelveticaNeue-CondensedBold", "Franklin Gothic Medium",
     "Segoe UI", system-ui, sans-serif;
 }
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   background: var(--sao-bg);
@@ -162,7 +163,7 @@ input, textarea {
   width: 100%;
   min-height: 44px;
   padding: 10px 12px;
-  font-size: 15px;
+  font-size: 16px;
   color: #ece5d8;
   background: var(--sao-dark-panel);
   border: 1px solid var(--sao-dark-line);
@@ -376,6 +377,10 @@ main { padding-bottom: 110px; }
 }
 .search-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .search-row input { flex: 1; }
+@media (max-width: 479px) {
+  .search-row { flex-direction: column; }
+  .search-row button { width: 100%; }
+}
 .search-row button {
   flex: none;
   min-height: 44px;
@@ -440,6 +445,10 @@ main { padding-bottom: 110px; }
 /* Link import row */
 .link-row { display: flex; gap: 8px; margin-bottom: 16px; }
 .link-row input { flex: 1; }
+@media (max-width: 479px) {
+  .link-row { flex-direction: column; }
+  .link-row .go-btn { width: 100%; }
+}
 .go-btn {
   flex: none;
   min-height: 44px;

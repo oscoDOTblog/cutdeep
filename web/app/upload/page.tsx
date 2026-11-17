@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ResultCard from "../components/ResultCard";
+import TileIcon from "../components/TileIcon";
 import { identifyClip } from "../lib/api";
 import type { Candidate } from "../lib/scans";
 
@@ -133,14 +134,14 @@ export default function Upload() {
         <div className="tiles">
           <button type="button" className="tile-card" onClick={() => setMode("link")}>
             <span className="tile-glyph" aria-hidden="true">
-              ◆
+              <TileIcon name="link" />
             </span>
             <span className="tile-title">Fetch with link</span>
             <span className="tile-sub">Paste a SoundCloud, YouTube, or Bandcamp URL. We pull the audio and fingerprint it.</span>
           </button>
           <button type="button" className="tile-card" onClick={() => setMode("files")}>
             <span className="tile-glyph" aria-hidden="true">
-              ◆
+              <TileIcon name="files" />
             </span>
             <span className="tile-title">Upload with files</span>
             <span className="tile-sub">Choose an audio file from your device and match it right away.</span>

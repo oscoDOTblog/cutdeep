@@ -249,14 +249,15 @@ button.secondary:focus-visible {
 /* Bottom tab bar */
 .tabbar {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: 16px;
+  right: 16px;
   display: flex;
   gap: 6px;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  padding: 8px;
   background: rgba(30, 32, 36, 0.96);
-  border-top: 1px solid var(--sao-dark-line);
+  border-top: 3px solid var(--sao-amber);
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px), 0 14px);
   z-index: 10;
 }
 .tab {
@@ -271,8 +272,8 @@ button.secondary:focus-visible {
   text-decoration: none;
   padding: 12px 4px;
   min-height: 44px;
-  border-radius: 9999px;
   border: 1px solid var(--sao-dark-line);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
 }
 .tab.active {
   background: var(--sao-amber);
@@ -280,8 +281,8 @@ button.secondary:focus-visible {
   color: var(--sao-amber-ink);
 }
 .tab:focus-visible {
-  outline: 3px solid var(--sao-amber);
-  outline-offset: 2px;
+  outline: none;
+  filter: drop-shadow(0 0 6px var(--sao-amber));
 }
 main { padding-bottom: 110px; }
 

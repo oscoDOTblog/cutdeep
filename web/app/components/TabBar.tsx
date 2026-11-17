@@ -21,6 +21,7 @@ export default function TabBar() {
           className={path === t.href ? "tab active" : "tab"}
           aria-current={path === t.href ? "page" : undefined}
         >
+          {path === t.href ? "◆ " : ""}
           {t.label}
         </Link>
       ))}

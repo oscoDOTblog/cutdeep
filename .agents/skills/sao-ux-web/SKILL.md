@@ -80,7 +80,11 @@ names, buttons, and status labels. Always uppercase with
 - **Device cells:** light panel with amber top edge and amber diamond
   before the name; host line muted.
 - **Switcher groups:** dark rounded-full strip, dark-line border; active
-  option is a filled amber pill with white text.
+  option is a filled amber pill with white text. Round is reserved for
+  these dial-style groups only.
+- **Tab bar:** square dark strip with an amber top edge, `clip-path`
+  corner cuts (14px container, 8px tabs) instead of rounded pills; the
+  active tab is a filled amber block with a leading `◆` and white text.
 - **Focus mode:** all groups stacked one after another with large cards,
   no dropdown picker. Filters apply across every group.
 - **Focus visibility:** clipped elements can't show outlines (clip-path

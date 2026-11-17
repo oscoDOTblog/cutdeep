@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
+import link_import
 import store
 from fingerprint import fingerprint_file
 
@@ -66,6 +67,34 @@ async def identify(file: UploadFile = File(...), top_n: int = 5) -> dict:
         }
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+@app.post("/link/metadata")
+async def link_metadata(payload: dict) -> dict:
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    try:
+        return link_import.fetch_metadata(url)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"metadata fetch failed: {e}")
+
+
+@app.post("/link/import")
+async def link_import_start(payload: dict) -> dict:
+    url = (payload.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    job_id = link_import.start_import(url, payload.get("title", ""), payload.get("artist", ""))
+    return {"job_id": job_id}
+
+
+@app.get("/link/jobs/{job_id}")
+def link_job(job_id: str) -> dict:
+    job = link_import.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
 
 
 @app.get("/search")

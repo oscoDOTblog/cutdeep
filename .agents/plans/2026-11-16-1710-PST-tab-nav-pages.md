@@ -15,7 +15,8 @@ images, playback, accounts/sync.
   top result with a source link.
 - `/library` lists past successful scans grouped by day with counts.
 - `/search` queries the indexed catalog and links out to sources.
-- `/upload` keeps the existing file-upload and submit-link flows working.
+- `/upload` offers tile choice (fetch with link / upload with files); link imports
+fingerprint into the catalog with live progress.
 - Bottom tab bar (Home / Library / Search / Upload) on all pages.
 - `npm run build` passes; identify flow still works end to end.
 
@@ -31,7 +32,8 @@ result tiles use an amber ◆ placeholder.
 /           home: big button -> listening rings -> LinkStart -> top result
 /library    successful scans, grouped Today / Yesterday / Earlier + count
 /search     input + button -> GET /api/search -> rows with source links
-/upload     file picker card + submit-link form (moved as-is)
+/upload     tiles: link import (URL -> details -> job w/ progress -> ingest)
+           or file picker identify (moved as-is)
 ```
 
 Shared client code in `web/app/lib/scans.ts`: scan record

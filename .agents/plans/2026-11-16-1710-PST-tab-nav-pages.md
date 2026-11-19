@@ -31,9 +31,23 @@ result tiles use an amber ◆ placeholder.
 ```text
 /           home: big button -> listening rings -> LinkStart -> top result
 /library    successful scans, grouped Today / Yesterday / Earlier + count
-/search     input + button -> GET /api/search -> rows with source links
+/search     library view: loads the whole catalog once, input filters
+           locally by title/artist/album (no per-keystroke requests)
 /upload     tiles: link import (URL -> details -> job w/ progress -> ingest)
            or file picker identify (moved as-is)
+imports run on a 3-worker pool (IMPORT_WORKERS), no MP3 transcode —
+the fingerprinter decodes downloads as-is; speed/ETA shown while fetching.
+Upload link branch lists jobs with per-job cancel and a clear-finished
+action (DELETE /link/jobs/:id and DELETE /link/jobs); cancelling mid-fetch
+aborts the download and ingests nothing.
+Match quality gate: candidates need >=10 agreeing landmark votes and >=0.1
+confidence; Home saves to the library only at >=0.4. Library rows have a
+remove button for anything saved before the gate.
+Ingest rejects zero-fingerprint audio (400) and dedupes by source_url;
+done cards show real landmark counts ("N landmarks indexed",
+"already in catalog") instead of a fake 100%.
+Search matches title, artist, and album; both upload flows capture album;
+existing DBs gain the album column via startup migration.
 ```
 
 Shared client code in `web/app/lib/scans.ts`: scan record
@@ -80,7 +94,9 @@ parse that also accepts the old `{top, conf}` history shape. Shared
 - No artwork service exists; ◆ tiles stand in until source thumbnails do.
 - Covers: link imports save thumbnails to local `covers` volume (`COVER_DIR`),
   served at `/api/covers/`. S3 migration is a later step (swap `COVER_DIR`
-  handling for object storage + CDN URLs).
+  handling for object storage + CDN URLs). The link review step offers a
+  custom cover file picker that overrides the fetched thumbnail;
+  `/link/import` takes multipart (fields + optional cover file).
 - `song-info.PNG` detail view is out of scope; top result links straight
   to the external source for now.
 

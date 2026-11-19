@@ -13,26 +13,27 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus", ".wma", ".aif", 
 
 
 def sweep() -> None:
-    store.connect().close()
     if not MUSIC_DIR.is_dir():
         return
+    conn = store.connect()
+    try:
+        imported = {row[0] for row in conn.execute("SELECT path FROM folder_imports")}
+    finally:
+        conn.close()
     for path in sorted(MUSIC_DIR.iterdir()):
         if not path.is_file() or path.suffix.lower() not in AUDIO_EXTS:
             continue
         done = path.with_suffix(path.suffix + ".done")
-        if done.exists():
+        if path.name in imported or done.exists():
             continue
         try:
-            res = store.ingest_file(path, title=path.stem)
+            res = store.ingest_file(path, title=path.stem, folder_path=path.name)
             print(f"ingested {path.name}: {res['n_hashes']} hashes", flush=True)
         except Exception as e:  # noqa: BLE001 - keep worker alive on bad files
             print(f"skip {path.name}: {e}", flush=True)
-            continue
-        done.touch()
 
 
 if __name__ == "__main__":
-    store.rebuild_index()
     while True:
         sweep()
         time.sleep(POLL_SECS)

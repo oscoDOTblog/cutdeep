@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ResultCard from "../components/ResultCard";
-import { loadScans, type Scan } from "../lib/scans";
+import { loadScans, removeScan, type Scan } from "../lib/scans";
 
 function dayKey(ts: number) {
   const d = new Date(ts);
@@ -37,7 +37,9 @@ export default function Library() {
 
   const now = new Date();
   const today = dayKey(now.getTime());
-  const yesterday = dayKey(now.getTime() - 86400000);
+  const previousDay = new Date(now);
+  previousDay.setDate(now.getDate() - 1);
+  const yesterday = dayKey(previousDay.getTime());
   const groups = new Map<string, Scan[]>();
   for (const s of scans) {
     const label = groupLabel(s.ts, today, yesterday);
@@ -51,22 +53,34 @@ export default function Library() {
         <span className="dia">◆</span> Library
       </h2>
       <p className="status">
-        {scans.length} song{scans.length === 1 ? "" : "s"}
+        {scans.length} saved scan{scans.length === 1 ? "" : "s"} on this device
       </p>
       {[...groups].map(([label, items]) => (
         <section key={label}>
           <h2 className="sec">{label}</h2>
           {items.map((s) => (
-            <ResultCard
-              key={s.ts}
-              title={s.title}
-              artist={s.artist}
-              sourceUrl={s.sourceUrl}
-              conf={s.conf}
-              votes={s.votes}
-              extra={new Date(s.ts).toLocaleString()}
-              coverUrl={s.coverUrl}
-            />
+            <div key={s.ts} className="lib-row">
+              <div className="lib-row-body">
+                <ResultCard
+                  title={s.title}
+                  artist={s.artist}
+                  album={s.album}
+                  sourceUrl={s.sourceUrl}
+                  conf={s.conf}
+                  votes={s.votes}
+                  extra={new Date(s.ts).toLocaleString()}
+                  coverUrl={s.coverUrl}
+                />
+              </div>
+              <button
+                type="button"
+                className="lib-remove"
+                aria-label={`Remove ${s.title} from library`}
+                onClick={() => setScans(removeScan(s.ts))}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </section>
       ))}

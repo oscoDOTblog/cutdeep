@@ -9,97 +9,124 @@ import { saveScan, type Candidate } from "./lib/scans";
 
 const CLIP_SECS = 10;
 
-type Phase = "idle" | "listening" | "matching" | "done";
+type Phase = "idle" | "requesting" | "listening" | "matching" | "done";
+
+type Recording = {
+  recorder?: MediaRecorder;
+  timer?: ReturnType<typeof setInterval>;
+  request: AbortController;
+};
+
+function release(recording: Recording) {
+  clearInterval(recording.timer);
+  const rec = recording.recorder;
+  if (!rec) return;
+  rec.onstop = null;
+  rec.onerror = null;
+  if (rec.state !== "inactive") rec.stop();
+  rec.stream.getTracks().forEach((track) => track.stop());
+}
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [secs, setSecs] = useState(0);
   const [error, setError] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const recRef = useRef<MediaRecorder | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const cancelledRef = useRef(false);
+  const session = useRef<Recording | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  function stopTracks() {
-    recRef.current?.stream.getTracks().forEach((t) => t.stop());
+  function abandon() {
+    const active = session.current;
+    session.current = null;
+    if (!active) return;
+    active.request.abort();
+    release(active);
   }
 
-  function stopTimer() {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }
+  useEffect(() => abandon, []);
 
   async function startListen() {
+    if (session.current) return;
     setError("");
     setCandidates([]);
-    cancelledRef.current = false;
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
-      setError("Microphone blocked. Allow mic access or use the Upload tab instead.");
+    setSecs(0);
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setError("Microphone recording needs a supported browser on HTTPS or localhost.");
       return;
     }
-    const rec = new MediaRecorder(stream);
-    const chunks: BlobPart[] = [];
-    rec.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-    };
-    rec.onstop = async () => {
-      stopTracks();
-      stopTimer();
-      if (cancelledRef.current) {
-        setPhase("idle");
-        setSecs(0);
+    const active: Recording = { request: new AbortController() };
+    session.current = active;
+    setPhase("requesting");
+    let stream: MediaStream | undefined;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      if (session.current !== active) {
+        stream.getTracks().forEach((track) => track.stop());
         return;
       }
-      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-      setPhase("matching");
-      try {
-        const found = await identifyClip(blob, "clip.webm");
-        setCandidates(found);
-        const top = found[0];
-        if (top) {
-          saveScan({
-            ts: Date.now(),
-            title: top.title,
-            artist: top.artist,
-            sourceUrl: top.source_url,
-            conf: top.confidence,
-            votes: top.votes,
-            coverUrl: top.cover_url ?? "",
-          });
+      const rec = new MediaRecorder(stream);
+      active.recorder = rec;
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size) chunks.push(e.data);
+      };
+      rec.onerror = () => {
+        abandon();
+        setError("Recording stopped unexpectedly. Try again.");
+        setPhase("idle");
+      };
+      rec.onstop = async () => {
+        release(active);
+        if (session.current !== active) return;
+        setPhase("matching");
+        try {
+          const blob = new Blob(chunks, { type: rec.mimeType });
+          const found = await identifyClip(blob, "clip", active.request.signal);
+          if (session.current !== active) return;
+          setCandidates(found);
+          const top = found[0];
+          if (top && top.confidence >= 0.4) {
+            saveScan({
+              ts: Date.now(),
+              title: top.title,
+              artist: top.artist,
+              album: top.album ?? "",
+              sourceUrl: top.source_url,
+              conf: top.confidence,
+              votes: top.votes,
+              coverUrl: top.cover_url ?? "",
+            });
+          }
+        } catch {
+          if (session.current !== active) return;
+          setError("Could not match the recording. Try again.");
         }
-      } catch {
-        setError("Could not reach the matching service.");
-        setCandidates([]);
-      }
-      setPhase("done");
-    };
-    recRef.current = rec;
-    rec.start();
-    setPhase("listening");
-    setSecs(0);
-    timerRef.current = setInterval(() => {
-      setSecs((s) => {
-        const n = s + 1;
-        if (n >= CLIP_SECS) rec.stop();
-        return n;
-      });
-    }, 1000);
+        session.current = null;
+        setPhase("done");
+      };
+      rec.start();
+      const started = performance.now();
+      setPhase("listening");
+      active.timer = setInterval(() => {
+        const elapsed = Math.min(CLIP_SECS, Math.floor((performance.now() - started) / 1000));
+        setSecs(elapsed);
+        if (elapsed >= CLIP_SECS && rec.state !== "inactive") rec.stop();
+      }, 100);
+    } catch (e) {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (session.current !== active) return;
+      abandon();
+      setError(e instanceof DOMException && e.name === "NotAllowedError"
+        ? "Microphone access denied. Allow it in your browser and try again."
+        : "Could not start recording. Check that a microphone is available.");
+      setPhase("idle");
+    }
   }
 
   function cancel() {
-    cancelledRef.current = true;
-    recRef.current?.stop();
+    abandon();
+    setPhase("idle");
   }
 
   return (
@@ -112,13 +139,15 @@ export default function Home() {
         <p>Hold it up during the battle. Get the remix, not the original.</p>
       </div>
 
-      {phase === "idle" && (
+      {(phase === "idle" || phase === "requesting") && (
         <section className="dial-stage">
-          <button className="dial" onClick={startListen} aria-label="Tap to identify music">
+          <button className="dial" onClick={startListen} aria-label="Tap to identify music" disabled={phase === "requesting"}>
             ◆
           </button>
           <div className="dial-label">Tap to cutdeep</div>
-          <div className="dial-sub">{error || "10 second listen"}</div>
+          {error ? <div className="dial-sub" role="alert">{error}</div> : (
+            <div className="dial-sub" role="status">{phase === "requesting" ? "Waiting for microphone permission…" : "10 second listen"}</div>
+          )}
         </section>
       )}
 
@@ -133,8 +162,8 @@ export default function Home() {
             <span className="ring" />
             <span className="ring-core">◆</span>
           </div>
-          <div className="listen-words" role="status">
-            Listening… {secs}s
+          <div className="listen-words">
+            <span role="status">Listening…</span> {secs}s
           </div>
           <div className="listen-tip">Make sure your device can hear the song clearly</div>
         </section>
@@ -148,10 +177,10 @@ export default function Home() {
 
       {phase === "done" && (
         <section>
-          {candidates.length === 0 ? (
-            <p className="status">
+          {error ? <p className="err" role="alert">{error}</p> : candidates.length === 0 ? (
+            <p className="status" role="status">
               No match in the catalog yet.{" "}
-              <Link href="/upload">Add the link</Link> or try a louder clip.
+              Try another recording, or <Link href="/upload">add a reference track</Link> if you know the remix.
             </p>
           ) : (
             candidates.map((c) => (
@@ -159,6 +188,7 @@ export default function Home() {
                 key={c.track_id}
                 title={c.title}
                 artist={c.artist}
+                album={c.album}
                 sourceUrl={c.source_url}
                 conf={c.confidence}
                 votes={c.votes}

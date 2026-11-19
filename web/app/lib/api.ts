@@ -19,12 +19,12 @@ export function apiError(data: any, fallback: string): string {
   return fallback;
 }
 
-export async function identifyClip(blob: Blob, name: string): Promise<Candidate[]> {
+export async function identifyClip(blob: Blob, name: string, signal?: AbortSignal): Promise<Candidate[]> {
   const fd = new FormData();
   fd.append("file", blob, name);
   let res: Response;
   try {
-    res = await fetch("/api/identify", { method: "POST", body: fd });
+    res = await fetch("/api/identify", { method: "POST", body: fd, signal });
   } catch {
     throw new Error("could not reach the matching service — is fp-api running?");
   }

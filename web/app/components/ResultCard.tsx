@@ -4,11 +4,15 @@ type Props = {
   sourceUrl: string;
   conf: number;
   votes: number;
+  year?: string;
+  album?: string;
   extra?: string;
   coverUrl?: string;
+  /** Replaces the default "N% · M landmark votes" line (e.g. for ingests). */
+  stats?: string;
 };
 
-export default function ResultCard({ title, artist, sourceUrl, conf, votes, extra, coverUrl }: Props) {
+export default function ResultCard({ title, artist, sourceUrl, conf, votes, year, album, extra, coverUrl, stats }: Props) {
   const pct = Math.round(conf * 100);
   const band = conf >= 0.75 ? "high" : conf >= 0.4 ? "mid" : "low";
   return (
@@ -26,11 +30,15 @@ export default function ResultCard({ title, artist, sourceUrl, conf, votes, extr
           <span className="dia">◆</span> {title}
         </div>
         {artist && <div className="a">{artist}</div>}
-        <div className={`hp ${band}`} aria-hidden="true">
-          <i style={{ width: `${pct}%` }} />
-        </div>
+        {album && <div className="a">{album}</div>}
+        {!stats && (
+          <div className={`hp ${band}`} aria-hidden="true">
+            <i style={{ width: `${pct}%` }} />
+          </div>
+        )}
         <div className="meta">
-          {pct}% · {votes} landmark votes
+          {stats ?? <>{pct}% · {votes} landmark votes</>}
+          {year && <> · {year}</>}
           {extra && <> · {extra}</>}
           {sourceUrl && (
             <>

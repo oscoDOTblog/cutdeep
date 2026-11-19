@@ -4,10 +4,17 @@ const FP = process.env.FP_API_URL ?? "http://localhost:8000";
 export async function proxyJson(req: Request, target: string) {
   let upstream: Response;
   try {
-    const init: RequestInit = { method: req.method };
+    const init: RequestInit & { duplex?: string } = { method: req.method };
     if (req.method !== "GET" && req.method !== "HEAD") {
-      init.headers = { "Content-Type": "application/json" };
-      init.body = await req.text();
+      const ct = req.headers.get("content-type") ?? "";
+      if (ct.includes("multipart/form-data")) {
+        init.headers = { "Content-Type": ct };
+        init.body = req.body;
+        init.duplex = "half";
+      } else {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = await req.text();
+      }
     }
     upstream = await fetch(target, init);
   } catch {

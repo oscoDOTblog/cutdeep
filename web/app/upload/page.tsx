@@ -1,32 +1,81 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import ResultCard from "../components/ResultCard";
 import TileIcon from "../components/TileIcon";
-import { apiError, identifyClip, readJson } from "../lib/api";
-import type { Candidate } from "../lib/scans";
+import { apiError, readJson } from "../lib/api";
 
 type Meta = { title: string; artist: string; thumbnail: string; duration: number; source_url: string };
 type Job = {
   job_id: string;
   status: string;
   progress: number;
+  speed_bps?: number;
+  eta_s?: number | null;
   track_id?: number;
   title?: string;
   artist?: string;
+  album?: string;
   cover_url?: string;
+  source_url?: string;
+  n_hashes?: number;
+  deduped?: boolean;
   error?: string;
 };
+
+function terminal(job: Job) {
+  return ["done", "failed", "cancelled"].includes(job.status);
+}
+
+function jobStatus(job: Job) {
+  switch (job.status) {
+    case "fetching": {
+      const speed = formatSpeed(job.speed_bps);
+      return `Downloading audio… ${Math.round(job.progress * 100)}%${speed ? ` · ${speed}` : ""}${
+        job.eta_s != null ? ` · ~${job.eta_s}s left` : ""
+      }`;
+    }
+    case "fingerprinting": return "Adding to catalog…";
+    case "cancelling": return "Cancelling…";
+    case "done": return job.deduped ? "Already in catalog" : "Added to catalog";
+    case "failed": return job.error || "Import failed.";
+    case "cancelled": return "Import cancelled";
+    default: return "Queued";
+  }
+}
+
+function formatSpeed(bps?: number): string {
+  if (!bps || bps <= 0) return "";
+  if (bps < 1024) return `${bps} B/s`;
+  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+}
 
 export default function Upload() {
   const [mode, setMode] = useState<"link" | "files" | null>(null);
 
-  // Files mode (existing flow)
+  // Files mode (upload with metadata)
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState("");
-  const [matching, setMatching] = useState(false);
+  const [fileTitle, setFileTitle] = useState("");
+  const [fileArtist, setFileArtist] = useState("");
+  const [fileAlbum, setFileAlbum] = useState("");
+  const [fileYear, setFileYear] = useState("");
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverName, setCoverName] = useState("");
+  const [adding, setAdding] = useState(false);
   const [fileError, setFileError] = useState("");
-  const [searched, setSearched] = useState(false);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [added, setAdded] = useState<{
+    track_id: number;
+    title: string;
+    artist: string;
+    album: string;
+    year: string;
+    cover_url: string;
+    source_url: string;
+    n_hashes: number;
+    deduped: boolean;
+  } | null>(null);
 
   // Link mode (videodl-style flow)
   const [url, setUrl] = useState("");
@@ -34,38 +83,132 @@ export default function Upload() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [linkTitle, setLinkTitle] = useState("");
   const [linkArtist, setLinkArtist] = useState("");
+  const [linkAlbum, setLinkAlbum] = useState("");
+  const [linkCover, setLinkCover] = useState<File | null>(null);
+  const [linkCoverName, setLinkCoverName] = useState("");
+  const [linkCoverPreview, setLinkCoverPreview] = useState("");
   const [linkError, setLinkError] = useState("");
-  const [job, setJob] = useState<Job | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
   const [suggestMsg, setSuggestMsg] = useState("");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsError, setJobsError] = useState("");
+  const [jobAction, setJobAction] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const job = jobs.find((j) => j.job_id === currentJobId);
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (linkCoverPreview) URL.revokeObjectURL(linkCoverPreview);
     };
-  }, []);
+  }, [linkCoverPreview]);
 
-  function backToOptions() {
-    if (pollRef.current) clearInterval(pollRef.current);
-    setMode(null);
-    setMeta(null);
-    setJob(null);
-    setLinkError("");
-    setCandidates([]);
-    setSearched(false);
+  useEffect(() => {
+    if (mode !== "link") return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        const r = await fetch("/api/link/jobs", { signal: controller.signal });
+        const { ok, data } = await readJson(r);
+        if (!ok) throw new Error("Could not load imports");
+        if (!controller.signal.aborted) {
+          setJobs(data.jobs);
+          setJobsError((message) => message === "Could not refresh import status. Retrying…" ? "" : message);
+          if (currentJobId && !data.jobs.some((j: Job) => j.job_id === currentJobId)) setCurrentJobId(null);
+        }
+      } catch {
+        if (!controller.signal.aborted && currentJobId) setJobsError("Could not refresh import status. Retrying…");
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(load, 1500);
+      }
+    };
+    // Wait until the start request returns before replacing the list.
+    if (!starting) load();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [mode, starting, currentJobId, refresh]);
+
+  async function updateJobs(path: string) {
+    setJobAction(true);
+    setJobsError("");
+    try {
+      const response = await fetch(`/api/link/jobs${path}`, { method: "DELETE" });
+      const { ok, data } = await readJson(response);
+      if (!ok) throw new Error(apiError(data, "Could not update imports."));
+      if (data.status === "fingerprinting") setJobsError("This track is already being added to the catalog.");
+    } catch (e) {
+      setJobsError(e instanceof Error ? e.message : "Could not update imports.");
+    } finally {
+      setRefresh((n) => n + 1);
+      setJobAction(false);
+    }
   }
 
-  async function uploadFile(f: File) {
+  function resetLinkDetails() {
+    setLinkCoverPreview("");
+    setLinkCover(null);
+    setLinkCoverName("");
+    setMeta(null);
+    setCurrentJobId(null);
+    setLinkError("");
+    setLinkTitle("");
+    setLinkArtist("");
+    setLinkAlbum("");
+    setSuggestMsg("");
+  }
+
+  function backToOptions() {
+    resetLinkDetails();
+    setJobsError("");
+    setMode(null);
+    setAudioFile(null);
+    setFileName("");
+    setFileTitle("");
+    setFileArtist("");
+    setFileAlbum("");
+    setFileYear("");
+    setCoverFile(null);
+    setCoverName("");
     setFileError("");
-    setSearched(false);
-    setMatching(true);
+    setAdded(null);
+  }
+
+  async function addToCatalog() {
+    if (!audioFile || adding) return;
+    setFileError("");
+    setAdded(null);
+    setAdding(true);
     try {
-      setCandidates(await identifyClip(f, f.name));
-      setSearched(true);
-    } catch {
-      setFileError("Match failed. Try a louder, closer clip.");
+      const fd = new FormData();
+      fd.append("file", audioFile, audioFile.name);
+      fd.append("title", fileTitle.trim() || fileName);
+      fd.append("artist", fileArtist.trim());
+      fd.append("album", fileAlbum.trim());
+      fd.append("year", fileYear.trim());
+      if (coverFile) fd.append("cover", coverFile, coverFile.name);
+      const res = await fetch("/api/ingest", { method: "POST", body: fd });
+      const { ok, data } = await readJson(res);
+      if (!ok) throw new Error(apiError(data, "Could not add to catalog"));
+      setAdded({
+        track_id: data.track_id,
+        title: data.title,
+        artist: data.artist || "",
+        album: data.album || "",
+        year: data.year || "",
+        cover_url: data.cover_url || "",
+        source_url: "",
+        n_hashes: data.n_hashes ?? 0,
+        deduped: Boolean(data.deduped),
+      });
+      setAudioFile(null);
+    } catch (e) {
+      setFileError(e instanceof Error ? e.message : "Could not add to catalog.");
     } finally {
-      setMatching(false);
+      setAdding(false);
     }
   }
 
@@ -73,9 +216,7 @@ export default function Upload() {
     const u = url.trim();
     if (!u || metaLoading) return;
     setMetaLoading(true);
-    setLinkError("");
-    setMeta(null);
-    setJob(null);
+    resetLinkDetails();
     try {
       const res = await fetch("/api/link/metadata", {
         method: "POST",
@@ -87,6 +228,7 @@ export default function Upload() {
       setMeta(data);
       setLinkTitle(data.title || "");
       setLinkArtist(data.artist || "");
+      setLinkAlbum(data.album || "");
     } catch (e) {
       setLinkError(e instanceof Error ? e.message : "Could not load details");
     } finally {
@@ -95,36 +237,28 @@ export default function Upload() {
   }
 
   async function startImport() {
-    const u = url.trim();
-    if (!u) return;
+    if (!meta || starting || (job && !terminal(job))) return;
     setLinkError("");
-    setJob(null);
+    setJobsError("");
+    setStarting(true);
     try {
-      const res = await fetch("/api/link/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: u, title: linkTitle, artist: linkArtist, thumbnail: meta?.thumbnail ?? "" }),
-      });
+      const fd = new FormData();
+      fd.append("url", meta.source_url);
+      fd.append("title", linkTitle.trim());
+      fd.append("artist", linkArtist.trim());
+      fd.append("album", linkAlbum.trim());
+      fd.append("thumbnail", meta.thumbnail);
+      if (linkCover) fd.append("cover", linkCover, linkCover.name);
+      const res = await fetch("/api/link/import", { method: "POST", body: fd });
       const started = await readJson(res);
       if (!started.ok) throw new Error(apiError(started.data, "Could not start import"));
       const jobId = started.data.job_id as string;
-      setJob({ job_id: jobId, status: "queued", progress: 0 });
-      pollRef.current = setInterval(async () => {
-        try {
-          const r = await fetch(`/api/link/jobs/${jobId}`);
-          const { ok, data } = await readJson(r);
-          if (!ok) return;
-          const j = data as Job;
-          setJob(j);
-          if (j.status === "done" || j.status === "failed") {
-            if (pollRef.current) clearInterval(pollRef.current);
-          }
-        } catch {
-          /* keep polling; a transient failure is not the job failing */
-        }
-      }, 1000);
+      setCurrentJobId(jobId);
+      setJobs((previous) => [{ job_id: jobId, title: linkTitle, status: "queued", progress: 0 }, ...previous]);
     } catch (e) {
       setLinkError(e instanceof Error ? e.message : "Could not start import");
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -139,15 +273,15 @@ export default function Upload() {
             <span className="tile-glyph" aria-hidden="true">
               <TileIcon name="link" />
             </span>
-            <span className="tile-title">Fetch with link</span>
+            <span className="tile-title">Import from link</span>
             <span className="tile-sub">Paste a SoundCloud, YouTube, or Bandcamp URL. We pull the audio and fingerprint it.</span>
           </button>
           <button type="button" className="tile-card" onClick={() => setMode("files")}>
             <span className="tile-glyph" aria-hidden="true">
               <TileIcon name="files" />
             </span>
-            <span className="tile-title">Upload with files</span>
-            <span className="tile-sub">Choose an audio file from your device and match it right away.</span>
+            <span className="tile-title">Upload a track</span>
+            <span className="tile-sub">Add a reference audio file from your device for future matches.</span>
           </button>
         </div>
       </>
@@ -156,39 +290,41 @@ export default function Upload() {
 
   return (
     <>
-      <button type="button" className="back-link" onClick={backToOptions}>
+      <button type="button" className="back-link" onClick={backToOptions} disabled={adding || metaLoading || starting || suggesting}>
         ◆ Back to upload options
       </button>
 
       {mode === "link" && (
         <>
           <h2 className="sec">
-            <span className="dia">◆</span> Fetch with link
+            <span className="dia">◆</span> Import from link
           </h2>
-          <div className="link-row">
+          <form className="link-row" onSubmit={(e) => { e.preventDefault(); void loadDetails(); }}>
             <input
               placeholder="SoundCloud / YouTube / Bandcamp URL…"
               value={url}
               onChange={(e) => {
                 setUrl(e.target.value);
-                setMeta(null);
-                setJob(null);
+                resetLinkDetails();
               }}
               aria-label="Audio URL"
-              disabled={metaLoading}
+              type="url"
+              disabled={metaLoading || starting || suggesting}
             />
-            <button type="button" className="go-btn" onClick={loadDetails} disabled={!url.trim() || metaLoading}>
+            <button type="submit" className="go-btn" disabled={!url.trim() || metaLoading || starting || suggesting}>
               {metaLoading ? "Loading…" : "Load details"}
             </button>
-          </div>
-          {linkError && <div className="err">{linkError}</div>}
-          {linkError && url.trim() && (
+          </form>
+          {linkError && <div className="err" role="alert">{linkError}</div>}
+          {linkError && !meta && url.trim() && (
             <>
               <button
                 type="button"
                 className="secondary"
+                disabled={suggesting || suggestMsg === "Saved for review. Thanks."}
                 onClick={async () => {
                   setSuggestMsg("");
+                  setSuggesting(true);
                   try {
                     const res = await fetch("/api/submit", {
                       method: "POST",
@@ -205,6 +341,8 @@ export default function Upload() {
                     setSuggestMsg("Saved for review. Thanks.");
                   } catch (e) {
                     setSuggestMsg(e instanceof Error ? e.message : "Could not save suggestion.");
+                  } finally {
+                    setSuggesting(false);
                   }
                 }}
               >
@@ -219,17 +357,45 @@ export default function Upload() {
               <div className="t hud">
                 <span className="dia">◆</span> Review track details
               </div>
-              {meta.thumbnail && (
+              {linkCoverPreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={meta.thumbnail} alt="" className="thumb" />
+                <img src={linkCoverPreview} alt="Custom cover preview" className="thumb" />
+              ) : (
+                meta.thumbnail && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={meta.thumbnail} alt="" className="thumb" />
+                )
               )}
-              <form className="grid" onSubmit={(e) => e.preventDefault()}>
-                <input placeholder="Title" value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} aria-label="Title" />
-                <input placeholder="Artist / DJ" value={linkArtist} onChange={(e) => setLinkArtist(e.target.value)} aria-label="Artist" />
-              </form>
-              {!job && (
-                <button type="button" className="btn-amber" onClick={startImport}>
-                  ◆ Import & add to catalog
+              <fieldset className="grid" disabled={starting || Boolean(job && !terminal(job)) || job?.status === "done"}>
+                <label>Title<input value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} /></label>
+                <label>Artist / DJ<input value={linkArtist} onChange={(e) => setLinkArtist(e.target.value)} /></label>
+                <label>Album<input value={linkAlbum} onChange={(e) => setLinkAlbum(e.target.value)} /></label>
+                <span className="file-wrap">
+                  <span className="file-btn" aria-hidden="true">
+                    ◆ {linkCoverName || "Choose album cover"}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    aria-label="Choose album cover"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setLinkCover(f);
+                        setLinkCoverName(f.name);
+                        setLinkCoverPreview(URL.createObjectURL(f));
+                      } else {
+                        setLinkCover(null);
+                        setLinkCoverName("");
+                        setLinkCoverPreview("");
+                      }
+                    }}
+                  />
+                </span>
+              </fieldset>
+              {(!job || job.status === "failed" || job.status === "cancelled") && (
+                <button type="button" className="btn-amber" onClick={startImport} disabled={starting}>
+                  {starting ? "Starting import…" : job ? "Retry import" : "Import track"}
                 </button>
               )}
             </section>
@@ -238,29 +404,82 @@ export default function Upload() {
           {job && (
             <section className="card">
               <div className="t hud">
-                <span className="dia">◆</span> {job.status === "done" ? "Added to catalog" : job.status === "failed" ? "Import failed" : "Importing…"}
+                <span className="dia">◆</span>{" "}
+                {job.title || "Track import"}
               </div>
-              {job.status !== "done" && job.status !== "failed" && (
-                <>
-                  <div className={`hp mid`} aria-hidden="true">
-                    <i style={{ width: `${Math.round(job.progress * 100)}%` }} />
-                  </div>
-                  <div className="meta">
-                    {job.status === "fetching" ? `Fetching audio… ${Math.round(job.progress * 100)}%` : job.status === "fingerprinting" ? "Fingerprinting…" : "Queued…"}
-                  </div>
-                </>
+              {job.status === "fetching" && (
+                <div className="hp mid" aria-hidden="true">
+                  <i style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                </div>
               )}
-              {job.status === "failed" && <div className="err">{job.error || "Import failed."}</div>}
+              <div className={job.status === "failed" ? "err" : "meta"} role={job.status === "fetching" ? undefined : "status"}>
+                {jobStatus(job)}
+              </div>
+              {(job.status === "fetching" || job.status === "queued") && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={jobAction}
+                  onClick={() => updateJobs(`/${job.job_id}`)}
+                >
+                  Cancel import
+                </button>
+              )}
               {job.status === "done" && (
                 <ResultCard
                   title={job.title || linkTitle}
-                  artist={job.artist || linkArtist}
-                  sourceUrl={url.trim()}
+                  artist={job.artist ?? ""}
+                  album={job.album ?? ""}
+                  sourceUrl={job.source_url || meta?.source_url || ""}
                   conf={1}
                   votes={0}
-                  extra="freshly imported"
                   coverUrl={job.cover_url}
+                  stats={`${job.n_hashes ?? 0} landmarks indexed`}
                 />
+              )}
+            </section>
+          )}
+
+          {jobsError && <div className="err" role="alert">{jobsError}</div>}
+          {jobs.some((j) => j.job_id !== currentJobId || terminal(j)) && (
+            <section>
+              <h2 className="sec">
+                <span className="dia">◆</span> Imports
+              </h2>
+              {jobs.filter((j) => j.job_id !== currentJobId).map((j) => {
+                const canCancel = j.status === "queued" || j.status === "fetching";
+                return (
+                  <div className="card row" key={j.job_id}>
+                    <div className="rowbody">
+                      <div className="t hud">
+                        <span className="dia">◆</span> {j.title || "Untitled import"}
+                      </div>
+                      <div className="meta">
+                        {jobStatus(j)}
+                      </div>
+                      {canCancel && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={jobAction}
+                          onClick={() => updateJobs(`/${j.job_id}`)}
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {jobs.some(terminal) && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={jobAction}
+                  onClick={() => updateJobs("")}
+                >
+                  Clear finished
+                </button>
               )}
             </section>
           )}
@@ -270,7 +489,7 @@ export default function Upload() {
       {mode === "files" && (
         <>
           <h2 className="sec">
-            <span className="dia">◆</span> Identify a clip
+            <span className="dia">◆</span> Upload a track
           </h2>
           <section>
             <span className="file-wrap">
@@ -280,37 +499,79 @@ export default function Upload() {
               <input
                 type="file"
                 accept="audio/*"
+                disabled={adding}
                 aria-label="Choose audio file"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) {
+                    setAudioFile(f);
                     setFileName(f.name);
-                    uploadFile(f);
+                    setFileTitle(f.name.replace(/\.[^.]+$/, ""));
+                    setFileArtist("");
+                    setFileAlbum("");
+                    setFileYear("");
+                    setCoverFile(null);
+                    setCoverName("");
+                    setAdded(null);
+                    setFileError("");
+                    e.currentTarget.value = "";
                   }
                 }}
               />
             </span>
             {fileName && <span className="file-name">◆ {fileName}</span>}
-            {fileError && <div className="err">{fileError}</div>}
           </section>
 
-          {searched && !matching && (
-            <section>
-              {candidates.length === 0 ? (
-                <p className="status">No match in the catalog yet. Try the link tile instead.</p>
-              ) : (
-                candidates.map((c) => (
-                  <ResultCard
-                    key={c.track_id}
-                    title={c.title}
-                    artist={c.artist}
-                    sourceUrl={c.source_url}
-                    conf={c.confidence}
-                    votes={c.votes}
-                    coverUrl={c.cover_url}
+          {audioFile && (
+            <section className="card">
+              <div className="t hud">
+                <span className="dia">◆</span> Track details
+              </div>
+              <fieldset className="grid" disabled={adding}>
+                <label>Title<input value={fileTitle} onChange={(e) => setFileTitle(e.target.value)} /></label>
+                <label>Artist / DJ<input value={fileArtist} onChange={(e) => setFileArtist(e.target.value)} /></label>
+                <label>Album<input value={fileAlbum} onChange={(e) => setFileAlbum(e.target.value)} /></label>
+                <label>Year<input value={fileYear} onChange={(e) => setFileYear(e.target.value)} inputMode="numeric" /></label>
+                <span className="file-wrap" key={audioFile.name + audioFile.lastModified}>
+                  <span className="file-btn" aria-hidden="true">
+                    ◆ {coverName || "Choose album cover"}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    aria-label="Choose album cover"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setCoverFile(f);
+                        setCoverName(f.name);
+                      }
+                      e.currentTarget.value = "";
+                    }}
                   />
-                ))
-              )}
+                </span>
+              </fieldset>
+              <button type="button" className="btn-amber" onClick={addToCatalog} disabled={adding}>
+                {adding ? "Adding…" : "◆ Add to catalog"}
+              </button>
+              {fileError && <div className="err" role="alert">{fileError}</div>}
+            </section>
+          )}
+
+          {added && (
+            <section>
+              <p className="status" role="status">{added.deduped ? "Already in catalog" : "Added to catalog"}</p>
+              <ResultCard
+                title={added.title}
+                artist={added.artist}
+                sourceUrl=""
+                conf={1}
+                votes={0}
+                year={added.year}
+                album={added.album}
+                coverUrl={added.cover_url}
+                stats={`${added.n_hashes} landmarks indexed`}
+              />
             </section>
           )}
         </>

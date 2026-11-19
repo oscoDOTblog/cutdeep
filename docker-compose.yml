@@ -15,6 +15,7 @@ services:
     environment:
       DB_PATH: /data/meta.db
       COVER_DIR: /data/covers
+      IMPORT_WORKERS: "3"
 
   worker:
     build: ./fp-api

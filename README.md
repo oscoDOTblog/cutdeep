@@ -11,26 +11,24 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Seed the catalog
 
-Drop reference MP3/WAVs into `music/` — the worker fingerprints them
-automatically (about 30s poll). Or POST to the fingerprint service:
+Open Upload to import a link or add a reference audio file. You can also drop
+reference MP3/WAVs into `music/`. The worker checks the folder every 30 seconds.
+To seed the catalog from the command line, use the web API:
 
 ```sh
 curl -F "file=@remix.mp3" -F "title=Song X — DJ Y Bootleg" \
   -F "source_url=https://soundcloud.com/..." \
-  http://localhost:8000/ingest
+  http://localhost:3000/api/ingest
 ```
-
-Note: `fp-api` is not port-mapped in compose; use the web UI or
-`docker compose exec fp-api` for direct API access.
 
 ## How it works
 
 Record 10s in the browser → Next.js forwards the clip to `fp-api` →
 landmark fingerprint (spectrogram peaks → peak-pair hashes → offset voting)
-→ ranked remix candidates plus a submit-link fallback.
+→ ranked remix candidates. Confident matches are saved in the device's Library.
 
 ## Layout
 
-- `web/` — Next.js record/results/submit UI + `/api/*` proxy routes
+- `web/` — Next.js recording, library, catalog search, and upload UI with `/api/*` proxy routes
 - `fp-api/` — FastAPI fingerprint service, SQLite metadata, worker
 - `music/` — drop reference tracks here (git-ignored)

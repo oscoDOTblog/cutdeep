@@ -1,0 +1,16 @@
+import Link from "next/link";
+
+export default function Settings() {
+  return (
+    <>
+      <h1 className="sec"><span className="dia" aria-hidden="true">◆</span> Settings</h1>
+      <Link className="card settings-item" href="/settings/tracks">
+        <div className="rowbody">
+          <div className="t"><span className="dia" aria-hidden="true">◆</span> Uploaded tracks</div>
+          <div className="a">Edit track details or remove tracks from the matching catalog.</div>
+        </div>
+        <span className="settings-arrow" aria-hidden="true">›</span>
+      </Link>
+    </>
+  );
+}

@@ -7,18 +7,24 @@ import ResultCard from "./components/ResultCard";
 import { identifyClip } from "./lib/api";
 import { saveScan, type Candidate } from "./lib/scans";
 
-const CLIP_SECS = 10;
+const SCAN_LENGTHS = [10, 20] as const;
+type ScanLength = (typeof SCAN_LENGTHS)[number];
 
 type Phase = "idle" | "requesting" | "listening" | "matching" | "done";
 
 type Recording = {
   recorder?: MediaRecorder;
   timer?: ReturnType<typeof setInterval>;
+  audio?: AudioContext;
   request: AbortController;
 };
 
 function release(recording: Recording) {
   clearInterval(recording.timer);
+  if (recording.audio) {
+    void recording.audio.close().catch(() => {});
+    recording.audio = undefined;
+  }
   const rec = recording.recorder;
   if (!rec) return;
   rec.onstop = null;
@@ -27,9 +33,52 @@ function release(recording: Recording) {
   rec.stream.getTracks().forEach((track) => track.stop());
 }
 
+function createSignalReader(audio: AudioContext | undefined, stream: MediaStream) {
+  if (!audio) return;
+  try {
+    const analyser = audio.createAnalyser();
+    audio.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    let level = 0;
+    return () => {
+      if (audio.state !== "running") return null;
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) sum += sample * sample;
+      const db = 10 * Math.log10(sum / samples.length);
+      const strength = Math.max(0, Math.min(1, (db + 55) / 43));
+      level = Math.max(strength, level * 0.75);
+      return level;
+    };
+  } catch {
+    // Recording can proceed on browsers that cannot read the signal level.
+    return undefined;
+  }
+}
+
+function ScanResult({ candidate, primary = false }: { candidate: Candidate; primary?: boolean }) {
+  return (
+    <ResultCard
+      title={candidate.title}
+      artist={candidate.artist}
+      album={candidate.album}
+      year={candidate.year}
+      sourceUrl={candidate.source_url}
+      conf={candidate.confidence}
+      votes={candidate.votes}
+      coverUrl={candidate.cover_url}
+      scanResult={primary ? candidate.match_status ?? "possible" : "alternative"}
+      previewUrl={candidate.preview_url}
+      bandcampTrackId={candidate.bandcamp_track_id}
+    />
+  );
+}
+
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("idle");
+  const [scanLength, setScanLength] = useState<ScanLength>(10);
   const [secs, setSecs] = useState(0);
+  const [signal, setSignal] = useState<number | null>();
   const [error, setError] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const session = useRef<Recording | null>(null);
@@ -49,6 +98,7 @@ export default function Home() {
     setError("");
     setCandidates([]);
     setSecs(0);
+    setSignal(undefined);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       setError("Microphone recording needs a supported browser on HTTPS or localhost.");
       return;
@@ -56,6 +106,13 @@ export default function Home() {
     const active: Recording = { request: new AbortController() };
     session.current = active;
     setPhase("requesting");
+    try {
+      // Start in the click handler so the audio context can use its activation.
+      active.audio = new AudioContext();
+      void active.audio.resume().catch(() => {});
+    } catch {
+      // The meter is optional when Web Audio is unavailable.
+    }
     let stream: MediaStream | undefined;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -92,6 +149,7 @@ export default function Home() {
               title: top.title,
               artist: top.artist,
               album: top.album ?? "",
+              year: top.year,
               sourceUrl: top.source_url,
               conf: top.confidence,
               votes: top.votes,
@@ -106,12 +164,14 @@ export default function Home() {
         setPhase("done");
       };
       rec.start();
+      const readSignal = createSignalReader(active.audio, stream);
       const started = performance.now();
       setPhase("listening");
       active.timer = setInterval(() => {
-        const elapsed = Math.min(CLIP_SECS, Math.floor((performance.now() - started) / 1000));
+        const elapsed = Math.min(scanLength, Math.floor((performance.now() - started) / 1000));
         setSecs(elapsed);
-        if (elapsed >= CLIP_SECS && rec.state !== "inactive") rec.stop();
+        setSignal(readSignal?.() ?? null);
+        if (elapsed >= scanLength && rec.state !== "inactive") rec.stop();
       }, 100);
     } catch (e) {
       stream?.getTracks().forEach((track) => track.stop());
@@ -129,6 +189,7 @@ export default function Home() {
     setPhase("idle");
   }
 
+  const [top, ...otherResults] = candidates;
   return (
     <>
       <div className="rail" aria-hidden="true" />
@@ -145,9 +206,25 @@ export default function Home() {
             ◆
           </button>
           <div className="dial-label">Tap to cutdeep</div>
-          {error ? <div className="dial-sub" role="alert">{error}</div> : (
-            <div className="dial-sub" role="status">{phase === "requesting" ? "Waiting for microphone permission…" : "10 second listen"}</div>
+          <fieldset className="scan-length" disabled={phase === "requesting"}>
+            <legend>Scan length</legend>
+            {SCAN_LENGTHS.map((length) => (
+              <label key={length}>
+                <input
+                  type="radio"
+                  name="scan-length"
+                  value={length}
+                  checked={scanLength === length}
+                  onChange={() => setScanLength(length)}
+                />
+                {length} seconds
+              </label>
+            ))}
+          </fieldset>
+          {phase === "requesting" && (
+            <div className="dial-sub" role="status">Waiting for microphone permission…</div>
           )}
+          {error && <div className="dial-sub" role="alert">{error}</div>}
         </section>
       )}
 
@@ -163,9 +240,19 @@ export default function Home() {
             <span className="ring-core">◆</span>
           </div>
           <div className="listen-words">
-            <span role="status">Listening…</span> {secs}s
+            <span role="status">Listening…</span> {secs} / {scanLength}s
           </div>
-          <div className="listen-tip">Make sure your device can hear the song clearly</div>
+          <div className="listen-signal">
+            <div className="hp mid" aria-hidden="true">
+              <i style={{ width: `${(signal ?? 0) * 100}%` }} />
+            </div>
+            <div className="listen-tip" role="status">
+              {signal === undefined ? "Checking microphone level…"
+                : signal === null ? "Microphone level unavailable"
+                : signal >= 0.3 ? "Sound detected"
+                : "Quiet signal · move closer to the music"}
+            </div>
+          </div>
         </section>
       )}
 
@@ -177,24 +264,21 @@ export default function Home() {
 
       {phase === "done" && (
         <section>
-          {error ? <p className="err" role="alert">{error}</p> : candidates.length === 0 ? (
+          {error ? <p className="err" role="alert">{error}</p> : !top ? (
             <p className="status" role="status">
-              No match in the catalog yet.{" "}
-              Try another recording, or <Link href="/upload">add a reference track</Link> if you know the remix.
+              No reliable match.{" "}
+              Try a clearer section, or <Link href="/upload">add a reference track</Link> if you know the remix.
             </p>
           ) : (
-            candidates.map((c) => (
-              <ResultCard
-                key={c.track_id}
-                title={c.title}
-                artist={c.artist}
-                album={c.album}
-                sourceUrl={c.source_url}
-                conf={c.confidence}
-                votes={c.votes}
-                coverUrl={c.cover_url}
-              />
-            ))
+            <>
+              <ScanResult candidate={top} primary />
+              {otherResults.length > 0 && (
+                <details className="scan-alternatives" open={top.match_status !== "likely"}>
+                  <summary>Other results ({otherResults.length})</summary>
+                  {otherResults.map((candidate) => <ScanResult key={candidate.track_id} candidate={candidate} />)}
+                </details>
+              )}
+            </>
           )}
           <button
             className="secondary scan-again"

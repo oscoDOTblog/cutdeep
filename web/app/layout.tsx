@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import TabBar from "./components/TabBar";
 import "./globals.css";
 
-export const metadata: Metadata = { title: "cutdeep — name that battle remix" };
+export const metadata: Metadata = { title: "CutDeep" };
 
 export const viewport: Viewport = {
   width: "device-width",

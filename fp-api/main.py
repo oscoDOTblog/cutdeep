@@ -1,17 +1,20 @@
 """Cutdeep fingerprint service: ingest reference tracks, identify clips."""
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 import link_import
 import store
-from fingerprint import fingerprint_file
+from fingerprint import decode_mono, fingerprint_hashes, speaker_hashes
 
 
 @asynccontextmanager
@@ -64,12 +67,14 @@ def identify(file: UploadFile = File(...), top_n: int = Query(5, ge=1, le=50)) -
         with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
             shutil.copyfileobj(file.file, tmp)
             tmp.flush()
-            hashes = fingerprint_file(tmp.name)
+            samples = decode_mono(tmp.name)
+            hashes = fingerprint_hashes(samples)
+            speaker = speaker_hashes(samples)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"decode failed: {e}")
-    candidates = store.match(hashes, top_n=top_n)
+    candidates = store.match(hashes, top_n=top_n, speaker=speaker)
     return {
-        "query_hashes": len(hashes),
+        "query_hashes": len(hashes) + len(speaker),
         "candidates": candidates,
         "match": candidates[0] if candidates else None,
     }
@@ -93,13 +98,17 @@ async def link_import_start(
     artist: str = Form(""),
     thumbnail: str = Form(""),
     album: str = Form(""),
+    year: str = Form(""),
     cover: UploadFile | None = File(default=None),
 ) -> dict:
     url = url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="url is required")
+    year = year.strip()
+    if year and not re.fullmatch(r"[1-9][0-9]{3}", year):
+        raise HTTPException(status_code=400, detail="Enter a four-digit release year.")
     raw = await cover.read() if cover is not None else b""
-    job_id = link_import.start_import(url, title, artist, thumbnail, album, raw)
+    job_id = link_import.start_import(url, title, artist, thumbnail, album, raw, year=year)
     return {"job_id": job_id}
 
 
@@ -134,6 +143,42 @@ def search(q: str = "", limit: int = Query(20, ge=1, le=500),
            before: int | None = Query(None, ge=1)) -> dict:
     rows = store.search_tracks(q.strip(), limit + 1, before)
     return {"results": rows[:limit], "next_before": rows[limit - 1]["track_id"] if len(rows) > limit else None}
+
+
+class TrackDetails(BaseModel):
+    title: str
+    artist: str
+    album: str
+    year: str
+
+
+@app.patch("/tracks/{track_id}")
+def update_track(track_id: int, details: TrackDetails) -> dict:
+    title, artist, album, year = (value.strip() for value in (
+        details.title, details.artist, details.album, details.year,
+    ))
+    if not title:
+        raise HTTPException(status_code=400, detail="Enter a title for this track.")
+    if year and not re.fullmatch(r"[1-9][0-9]{3}", year):
+        raise HTTPException(status_code=400, detail="Enter a four-digit release year.")
+    if not store.update_track(track_id, title, artist, album, year):
+        raise HTTPException(status_code=404, detail="This track is no longer in the catalog.")
+    return {"title": title, "artist": artist, "album": album, "year": year}
+
+
+@app.get("/tracks/{track_id}/preview")
+def get_track_preview(track_id: int) -> FileResponse:
+    path = store.track_preview(track_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Audio preview unavailable.")
+    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/tracks/{track_id}")
+def remove_track(track_id: int) -> dict:
+    if not store.remove_track(track_id):
+        raise HTTPException(status_code=404, detail="This track is no longer in the catalog.")
+    return {"removed": True}
 
 
 @app.post("/submit")

@@ -8,23 +8,22 @@ const TABS = [
   { href: "/library", label: "Library" },
   { href: "/search", label: "Search" },
   { href: "/upload", label: "Upload" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export default function TabBar() {
   const path = usePathname();
   return (
     <nav className="tabbar" aria-label="Primary">
-      {TABS.map((t) => (
-        <Link
-          key={t.href}
-          href={t.href}
-          className={path === t.href ? "tab active" : "tab"}
-          aria-current={path === t.href ? "page" : undefined}
-        >
-          {path === t.href ? "◆ " : ""}
-          {t.label}
-        </Link>
-      ))}
+      {TABS.map(({ href, label }) => {
+        const current = path === href ? "page" : path.startsWith(`${href}/`) ? "location" : undefined;
+        return (
+          <Link key={href} href={href} className={current ? "tab active" : "tab"} aria-current={current}>
+            {current && <span className="tab-marker" aria-hidden="true">◆ </span>}
+            {label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

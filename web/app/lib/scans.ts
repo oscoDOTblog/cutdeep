@@ -3,11 +3,16 @@ export type Scan = {
   title: string;
   artist: string;
   album: string;
+  year?: string;
   sourceUrl: string;
   conf: number;
   votes: number;
   coverUrl: string;
 };
+
+export type ScanDetails = Pick<Scan, "title" | "artist" | "album" | "year">;
+
+export type MatchStatus = "likely" | "possible";
 
 export type Candidate = {
   track_id: number;
@@ -16,6 +21,9 @@ export type Candidate = {
   source_url: string;
   votes: number;
   confidence: number;
+  match_status?: MatchStatus;
+  preview_url?: string;
+  bandcamp_track_id?: string;
   cover_url?: string;
   year?: string;
   album?: string;
@@ -32,7 +40,7 @@ function toScan(raw: unknown): Scan | null {
   // Legacy shape: {ts, top, conf}
   if (typeof r.top === "string") {
     return {
-      ts: typeof r.ts === "number" ? r.ts : Date.now(),
+      ts: typeof r.ts === "number" ? r.ts : 0,
       title: r.top,
       artist: "",
       sourceUrl: "",
@@ -48,6 +56,7 @@ function toScan(raw: unknown): Scan | null {
     title: r.title,
     artist: typeof r.artist === "string" ? r.artist : "",
     album: typeof r.album === "string" ? r.album : "",
+    year: typeof r.year === "string" ? r.year : undefined,
     sourceUrl: typeof r.sourceUrl === "string" ? r.sourceUrl : "",
     conf: typeof r.conf === "number" ? r.conf : 0,
     votes: typeof r.votes === "number" ? r.votes : 0,
@@ -74,22 +83,39 @@ export function loadScans(): Scan[] {
   return out.sort((a, b) => b.ts - a.ts).slice(0, MAX);
 }
 
-export function removeScan(ts: number): Scan[] {
-  const next = loadScans().filter((s) => s.ts !== ts);
-  try {
-    localStorage.setItem(LIB_KEY, JSON.stringify(next));
-    localStorage.removeItem(LEGACY_KEY);
-  } catch {
-    /* ignore */
+function writeScans(scans: Scan[]) {
+  localStorage.setItem(LIB_KEY, JSON.stringify(scans));
+  localStorage.removeItem(LEGACY_KEY);
+}
+
+function scanIndex(scans: Scan[], original: Scan) {
+  return scans.findIndex((scan) => scan.ts === original.ts && scan.title === original.title
+    && scan.artist === original.artist && scan.album === original.album);
+}
+
+export function removeScan(original: Scan): Scan[] {
+  const next = loadScans();
+  const index = scanIndex(next, original);
+  if (index !== -1) {
+    next.splice(index, 1);
+    writeScans(next);
   }
+  return next;
+}
+
+export function updateScan(original: Scan, details: ScanDetails): Scan[] {
+  const next = loadScans();
+  const index = scanIndex(next, original);
+  if (index === -1) throw new Error("This scan has changed. Reopen the scanned library to try again.");
+  next[index] = { ...next[index], ...details };
+  writeScans(next);
   return next;
 }
 
 export function saveScan(scan: Scan): Scan[] {
   const next = [scan, ...loadScans()].slice(0, MAX);
   try {
-    localStorage.setItem(LIB_KEY, JSON.stringify(next));
-    localStorage.removeItem(LEGACY_KEY);
+    writeScans(next);
   } catch {
     /* storage full or unavailable; library just won't persist */
   }

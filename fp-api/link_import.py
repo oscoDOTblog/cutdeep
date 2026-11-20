@@ -62,10 +62,12 @@ def fetch_metadata(url: str) -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 20}
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
+    release_year = info.get("release_year")
     return {
         "title": info.get("title") or "",
         "artist": info.get("artist") or info.get("uploader") or info.get("channel") or "",
         "album": info.get("playlist_title") or "",
+        "year": str(release_year) if isinstance(release_year, int) and 1000 <= release_year <= 9999 else "",
         "thumbnail": info.get("thumbnail") or "",
         "duration": info.get("duration") or 0,
         "source_url": info.get("webpage_url") or url,
@@ -124,7 +126,7 @@ def save_cover_bytes(track_id: int, raw: bytes) -> str:
 
 
 def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
-         album: str = "", cover_bytes: bytes = b"") -> None:
+         album: str = "", cover_bytes: bytes = b"", year: str = "") -> None:
     import yt_dlp
 
     with _jobs_lock:
@@ -172,7 +174,9 @@ def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
                 raise RuntimeError("download produced no audio file")
             name = title or info.get("title") or "untitled"
             who = artist or info.get("artist") or info.get("uploader") or ""
-            res = store.ingest_file(files[-1], name, artist=who, album=album, source_url=url)
+            bandcamp_id = str(info.get("id") or "") if info.get("extractor_key") == "Bandcamp" else ""
+            res = store.ingest_file(files[-1], name, artist=who, album=album, source_url=url,
+                                    year=year, downloaded_from_source=True, bandcamp_track_id=bandcamp_id)
         track_id = res["track_id"]
         if not res["deduped"]:
             if cover_bytes:
@@ -190,7 +194,7 @@ def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
 
 
 def start_import(url: str, title: str = "", artist: str = "", thumb_url: str = "",
-                 album: str = "", cover_bytes: bytes = b"") -> str:
+                 album: str = "", cover_bytes: bytes = b"", *, year: str = "") -> str:
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         JOBS[job_id] = {
@@ -202,7 +206,7 @@ def start_import(url: str, title: str = "", artist: str = "", thumb_url: str = "
             "title": title,
             "source_url": url,
         }
-    _pool.submit(_run, job_id, url, title, artist, thumb_url, album, cover_bytes)
+    _pool.submit(_run, job_id, url, title, artist, thumb_url, album, cover_bytes, year=year)
     return job_id
 
 

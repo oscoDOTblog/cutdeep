@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 SR = 11025
 FRAME = 4096
@@ -17,6 +18,10 @@ TARGET_ZONE_FRAMES = 21  # ~2s ahead of each anchor
 FANOUT = 3
 FREQ_MIN_BIN = 4
 FREQ_MAX_BIN = 400
+
+SPEAKER_FRAME = 2048
+SPEAKER_HOP = 256
+SPEAKER_BANDS = (42, 67, 105, 163, 251, 386, 591, 815)
 
 
 def decode_mono(path: str | Path) -> np.ndarray:
@@ -112,3 +117,40 @@ def fingerprint_hashes(x: np.ndarray) -> list[tuple[int, int]]:
 
 def fingerprint_file(path: str | Path) -> list[tuple[int, int]]:
     return fingerprint_hashes(decode_mono(path))
+
+
+def speaker_hashes(x: np.ndarray) -> list[tuple[int, int]]:
+    """Pair local peaks within frequency bands to tolerate speaker and mic EQ."""
+    if len(x) < SPEAKER_FRAME:
+        return []
+    frames = sliding_window_view(x, SPEAKER_FRAME)[::SPEAKER_HOP]
+    window = np.hanning(SPEAKER_FRAME).astype(np.float32)
+    last_bin = SPEAKER_BANDS[-1] + 1
+    spectrum = np.empty((len(frames), last_bin), dtype=np.float32)
+    # Bound the temporary FFT arrays for full-length reference tracks.
+    for start in range(0, len(frames), 256):
+        batch = frames[start:start + 256] * window
+        spectrum[start:start + len(batch)] = np.abs(np.fft.rfft(batch))[:, :last_bin]
+
+    center = spectrum[:, 1:-1]
+    peaks = (center > spectrum[:, :-2]) & (center >= spectrum[:, 2:])
+    for distance in (1, 2, 3):
+        peaks[distance:] &= center[distance:] > center[:-distance]
+        peaks[:-distance] &= center[:-distance] >= center[distance:]
+
+    pairs: set[tuple[int, int]] = set()
+    for low, high in zip(SPEAKER_BANDS, SPEAKER_BANDS[1:]):
+        band = spectrum[:, low:high]
+        floor = np.maximum(np.median(band, axis=1) * 8 + 0.002, band.max(axis=1) * 0.55)
+        times, bins = np.nonzero(peaks[:, low - 1:high - 1] & (band > floor[:, None]))
+        frequencies = ((bins + low + 1) // 3).tolist()
+        # Pair up to four targets from about 90 ms to 1.3 s after each anchor.
+        first = np.searchsorted(times, times + 4)
+        last = np.minimum(first + 4, np.searchsorted(times, times + 55, side="right"))
+        anchors = times.tolist()
+        for i, time in enumerate(anchors):
+            for j in range(first[i], last[i]):
+                delta = (anchors[j] - time + 1) // 2
+                h = frequencies[i] | frequencies[j] << 10 | delta << 20
+                pairs.add((h, time))
+    return sorted(pairs, key=lambda pair: (pair[1], pair[0]))

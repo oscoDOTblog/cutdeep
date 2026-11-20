@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import ResultCard from "../components/ResultCard";
 import { loadScans, removeScan, type Scan } from "../lib/scans";
@@ -18,6 +19,7 @@ function groupLabel(ts: number, today: string, yesterday: string) {
 
 export default function Library() {
   const [scans, setScans] = useState<Scan[] | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     setScans(loadScans());
@@ -52,23 +54,26 @@ export default function Library() {
       <h2 className="sec">
         <span className="dia">◆</span> Library
       </h2>
-      <p className="status">
-        {scans.length} saved scan{scans.length === 1 ? "" : "s"} on this device
-      </p>
+      <div className="library-summary">
+        <p className="status">{scans.length} saved scan{scans.length === 1 ? "" : "s"} on this device</p>
+        <Link className="settings-back" href="/library/manage">Manage scans</Link>
+      </div>
+      {error && <p className="err" role="alert">{error}</p>}
       {[...groups].map(([label, items]) => (
         <section key={label}>
           <h2 className="sec">{label}</h2>
-          {items.map((s) => (
-            <div key={s.ts} className="lib-row">
+          {items.map((s, index) => (
+            <div key={`${s.ts}-${index}`} className="lib-row">
               <div className="lib-row-body">
                 <ResultCard
                   title={s.title}
                   artist={s.artist}
                   album={s.album}
+                  year={s.year}
                   sourceUrl={s.sourceUrl}
                   conf={s.conf}
                   votes={s.votes}
-                  extra={new Date(s.ts).toLocaleString()}
+                  extra={s.ts ? new Date(s.ts).toLocaleString() : undefined}
                   coverUrl={s.coverUrl}
                 />
               </div>
@@ -76,7 +81,14 @@ export default function Library() {
                 type="button"
                 className="lib-remove"
                 aria-label={`Remove ${s.title} from library`}
-                onClick={() => setScans(removeScan(s.ts))}
+                onClick={() => {
+                  try {
+                    setScans(removeScan(s));
+                    setError("");
+                  } catch {
+                    setError("Could not remove the scan from this device.");
+                  }
+                }}
               >
                 ✕
               </button>

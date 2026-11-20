@@ -16,6 +16,7 @@ type Job = {
   title?: string;
   artist?: string;
   album?: string;
+  year?: string;
   cover_url?: string;
   source_url?: string;
   n_hashes?: number;
@@ -84,6 +85,7 @@ export default function Upload() {
   const [linkTitle, setLinkTitle] = useState("");
   const [linkArtist, setLinkArtist] = useState("");
   const [linkAlbum, setLinkAlbum] = useState("");
+  const [linkYear, setLinkYear] = useState("");
   const [linkCover, setLinkCover] = useState<File | null>(null);
   const [linkCoverName, setLinkCoverName] = useState("");
   const [linkCoverPreview, setLinkCoverPreview] = useState("");
@@ -158,6 +160,7 @@ export default function Upload() {
     setLinkTitle("");
     setLinkArtist("");
     setLinkAlbum("");
+    setLinkYear("");
     setSuggestMsg("");
   }
 
@@ -229,6 +232,7 @@ export default function Upload() {
       setLinkTitle(data.title || "");
       setLinkArtist(data.artist || "");
       setLinkAlbum(data.album || "");
+      setLinkYear(data.year || "");
     } catch (e) {
       setLinkError(e instanceof Error ? e.message : "Could not load details");
     } finally {
@@ -247,6 +251,7 @@ export default function Upload() {
       fd.append("title", linkTitle.trim());
       fd.append("artist", linkArtist.trim());
       fd.append("album", linkAlbum.trim());
+      fd.append("year", linkYear.trim());
       fd.append("thumbnail", meta.thumbnail);
       if (linkCover) fd.append("cover", linkCover, linkCover.name);
       const res = await fetch("/api/link/import", { method: "POST", body: fd });
@@ -370,6 +375,7 @@ export default function Upload() {
                 <label>Title<input value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} /></label>
                 <label>Artist / DJ<input value={linkArtist} onChange={(e) => setLinkArtist(e.target.value)} /></label>
                 <label>Album<input value={linkAlbum} onChange={(e) => setLinkAlbum(e.target.value)} /></label>
+                <label>Release year<input value={linkYear} onChange={(e) => setLinkYear(e.target.value)} inputMode="numeric" placeholder="YYYY" /></label>
                 <span className="file-wrap">
                   <span className="file-btn" aria-hidden="true">
                     ◆ {linkCoverName || "Choose album cover"}
@@ -430,6 +436,7 @@ export default function Upload() {
                   title={job.title || linkTitle}
                   artist={job.artist ?? ""}
                   album={job.album ?? ""}
+                  year={job.year}
                   sourceUrl={job.source_url || meta?.source_url || ""}
                   conf={1}
                   votes={0}

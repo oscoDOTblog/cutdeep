@@ -5,7 +5,6 @@ import { useId, useState } from "react";
 type Props = {
   title: string;
   sourceUrl: string;
-  previewUrl?: string;
   bandcampTrackId?: string;
 };
 
@@ -57,36 +56,19 @@ function getEmbed(sourceUrl: string, bandcampTrackId?: string) {
   }
 }
 
-export default function MatchPlayer({ title, sourceUrl, previewUrl, bandcampTrackId }: Props) {
+export default function MatchPlayer({ title, sourceUrl, bandcampTrackId }: Props) {
   const playerId = useId();
   const [open, setOpen] = useState(false);
-  const [previewFailed, setPreviewFailed] = useState(false);
   const embed = getEmbed(sourceUrl, bandcampTrackId);
-  const hasPreview = previewUrl && !previewFailed;
-  const sourceLink = sourceUrl && (
-    <a className={embed || hasPreview ? "match-player-source" : "scan-result-source"}
+  const sourceLink = (
+    <a className={embed ? "match-player-source" : "scan-result-source"}
       href={sourceUrl} target="_blank" rel="noreferrer">
       Open track <span aria-hidden="true">↗</span>
     </a>
   );
 
-  if (hasPreview) {
-    return (
-      <div className="match-player">
-        <span className="match-player-label">Audio preview</span>
-        <audio controls preload="none" src={previewUrl} aria-label={`Audio preview for ${title}`}
-          onError={() => setPreviewFailed(true)} />
-        {sourceLink}
-      </div>
-    );
-  }
   if (!embed) {
-    return sourceLink || previewFailed ? (
-      <div className="match-player">
-        {previewFailed && <p className="match-player-error" role="status">Audio preview unavailable.</p>}
-        {sourceLink}
-      </div>
-    ) : null;
+    return <div className="match-player">{sourceLink}</div>;
   }
 
   return (

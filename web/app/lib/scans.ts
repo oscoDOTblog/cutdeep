@@ -22,7 +22,6 @@ export type Candidate = {
   votes: number;
   confidence: number;
   match_status?: MatchStatus;
-  preview_url?: string;
   bandcamp_track_id?: string;
   cover_url?: string;
   year?: string;
@@ -60,7 +59,7 @@ function toScan(raw: unknown): Scan | null {
     sourceUrl: typeof r.sourceUrl === "string" ? r.sourceUrl : "",
     conf: typeof r.conf === "number" ? r.conf : 0,
     votes: typeof r.votes === "number" ? r.votes : 0,
-    coverUrl: typeof r.coverUrl === "string" ? r.coverUrl : "",
+    coverUrl: typeof r.coverUrl === "string" && /^https?:\/\//i.test(r.coverUrl) ? r.coverUrl : "",
   };
 }
 

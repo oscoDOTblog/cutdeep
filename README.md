@@ -40,6 +40,11 @@ A ready import includes the `track_id` now available in Search and Scan.
 A failure includes an `error` message. The optional metadata fields are
 `title`, `artist`, `album`, and `year`. Audio uploads default to a 256 MiB limit.
 
+CutDeep keeps fingerprints and track details. Audio files are staged for
+fingerprinting and discarded after processing. Link imports also store the
+source URL and any artwork URL returned by the provider. CutDeep loads artwork
+from that URL and uses the source link for playback.
+
 Repeated submissions of the same normalized URL or file bytes reuse the
 active import and return `reused_import: true`. A ready job also reports
 whether its run reused an existing catalog track in `deduped`.

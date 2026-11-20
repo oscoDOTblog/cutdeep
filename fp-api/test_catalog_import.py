@@ -69,14 +69,49 @@ class CatalogImportTest(unittest.TestCase):
         self.assertEqual(job["status"], "ready")
         self.assertFalse(job["deduped"])
         self.assertEqual(list(self.spool.glob("*.audio")), [])
+        self.assertFalse(store.PREVIEW_DIR.exists())
         self.assertEqual(submit(10)["track_id"], job["track_id"])
         self.assertEqual(store.search_tracks("Fixture")[0]["track_id"], job["track_id"])
         store.rebuild_index()
         samples = decode_mono(self.reference)
-        self.assertEqual(
-            store.match(fingerprint_hashes(samples), speaker=speaker_hashes(samples))[0]["track_id"],
-            job["track_id"],
-        )
+        match = store.match(fingerprint_hashes(samples), speaker=speaker_hashes(samples))[0]
+        self.assertEqual(match["track_id"], job["track_id"])
+        self.assertEqual(match["source_url"], "")
+        self.assertEqual(match["cover_url"], "")
+        self.assertNotIn("preview_url", match)
+
+    def test_link_import_keeps_provider_artwork_and_playback_urls(self):
+        url = "https://pressing.bandcamp.com/track/original-mix"
+        artwork = "https://f4.bcbits.com/img/a1234567890_10.jpg"
+        job = catalog_import.queue_url(url, {})
+        with patch("yt_dlp.YoutubeDL") as downloader:
+            extractor = downloader.return_value.__enter__.return_value
+
+            def extract_info(track_url, *, download):
+                self.assertTrue(download)
+                self.assertEqual(track_url, url)
+                output = downloader.call_args.args[0]["outtmpl"].replace("%(ext)s", "wav")
+                Path(output).write_bytes(self.audio)
+                return {"title": "Original Mix", "artist": "DJ", "thumbnail": artwork,
+                        "id": "1234567890", "extractor_key": "Bandcamp"}
+
+            extractor.extract_info.side_effect = extract_info
+            catalog_import._process(catalog_import._claim())
+
+        result = catalog_import.get_import(job["import_id"])
+        self.assertEqual(result["status"], "ready")
+        self.assertFalse(Path(downloader.call_args.args[0]["outtmpl"]).parent.exists())
+        self.assertFalse(store.PREVIEW_DIR.exists())
+        track = store.search_tracks("Original Mix")[0]
+        self.assertEqual(track["source_url"], url)
+        self.assertEqual(track["cover_url"], artwork)
+        store.rebuild_index()
+        samples = decode_mono(self.reference)
+        match = store.match(fingerprint_hashes(samples), speaker=speaker_hashes(samples))[0]
+        self.assertEqual(match["source_url"], url)
+        self.assertEqual(match["cover_url"], artwork)
+        self.assertEqual(match["bandcamp_track_id"], "1234567890")
+        self.assertNotIn("preview_url", match)
 
     def test_file_reuses_reference_uploaded_through_the_original_path(self):
         original = store.ingest_file(self.reference, "Original title")

@@ -68,7 +68,6 @@ function ScanResult({ candidate, primary = false }: { candidate: Candidate; prim
       votes={candidate.votes}
       coverUrl={candidate.cover_url}
       scanResult={primary ? candidate.match_status ?? "possible" : "alternative"}
-      previewUrl={candidate.preview_url}
       bandcampTrackId={candidate.bandcamp_track_id}
     />
   );

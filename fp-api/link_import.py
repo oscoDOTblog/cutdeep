@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 import store
+from source_urls import public_web_url
 
 WORKERS = max(1, int(os.environ.get("IMPORT_WORKERS", "3")))
 _pool = ThreadPoolExecutor(max_workers=WORKERS)
@@ -69,66 +70,15 @@ def fetch_metadata(url: str) -> dict:
         "artist": info.get("artist") or info.get("uploader") or info.get("channel") or "",
         "album": info.get("playlist_title") or "",
         "year": str(release_year) if isinstance(release_year, int) and 1000 <= release_year <= 9999 else "",
-        "thumbnail": info.get("thumbnail") or "",
+        "thumbnail": public_web_url(info.get("thumbnail")),
         "duration": info.get("duration") or 0,
         "source_url": info.get("webpage_url") or url,
     }
 
 
-def _cover_from_file(track_id: int, src: str) -> str:
-    """Normalize an image file to a local 512px jpg. Never fatal."""
-    import subprocess
-
-    try:
-        Path(store.COVER_DIR).mkdir(parents=True, exist_ok=True)
-        dest = Path(store.COVER_DIR, f"{track_id}.jpg")
-        with tempfile.NamedTemporaryFile(suffix=".jpg", dir=store.COVER_DIR, delete=False) as tmp:
-            output = Path(tmp.name)
-        try:
-            subprocess.run(
-                ["ffmpeg", "-v", "error", "-y", "-i", src,
-                 "-vf", "scale=512:-1", "-frames:v", "1", "-q:v", "4", str(output)],
-                check=True, timeout=30,
-            )
-            if output.stat().st_size:
-                output.replace(dest)
-        finally:
-            output.unlink(missing_ok=True)
-        return store.cover_url(track_id)
-    except Exception:  # noqa: BLE001 - a missing cover never fails the import
-        return ""
-
-
-def save_cover(track_id: int, thumb_url: str) -> str:
-    """Download a thumbnail and normalize it to a local jpg. Never fatal."""
-    import urllib.request
-
-    if not thumb_url:
-        return ""
-    try:
-        req = urllib.request.Request(thumb_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=20) as response:
-            return save_cover_bytes(track_id, response.read())
-    except Exception:  # noqa: BLE001 - artwork is optional
-        return ""
-
-
-def save_cover_bytes(track_id: int, raw: bytes) -> str:
-    """Store an uploaded cover image for a track. Never fatal."""
-    if not raw:
-        return ""
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".img") as tmp:
-            tmp.write(raw)
-            tmp.flush()
-            return _cover_from_file(track_id, tmp.name)
-    except OSError:
-        return ""
-
-
 def import_track(
-    url: str, *, title: str = "", artist: str = "", thumb_url: str = "", album: str = "",
-    cover_bytes: bytes = b"", year: str = "", canonical_source: bool = False,
+    url: str, *, title: str = "", artist: str = "", album: str = "",
+    year: str = "", canonical_source: bool = False,
     progress_hook: Callable[[dict], None] | None = None,
     on_indexing: Callable[[], None] | None = None,
 ) -> dict:
@@ -162,22 +112,14 @@ def import_track(
             if not year and isinstance(release_year, int) and 1000 <= release_year <= 9999:
                 year = str(release_year)
         bandcamp_id = str(info.get("id") or "") if info.get("extractor_key") == "Bandcamp" else ""
-        res = store.ingest_file(
+        return store.ingest_file(
             files[-1], name, artist=who, album=album, source_url=url, year=year,
             downloaded_from_source=True, bandcamp_track_id=bandcamp_id,
-            canonical_source=canonical_source,
+            cover_url=info.get("thumbnail") or "", canonical_source=canonical_source,
         )
-    track_id = res["track_id"]
-    if not res["deduped"]:
-        if cover_bytes:
-            save_cover_bytes(track_id, cover_bytes)
-        else:
-            save_cover(track_id, thumb_url or info.get("thumbnail") or "")
-    return {**res, "cover_url": store.cover_url(track_id)}
 
 
-def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
-         album: str = "", cover_bytes: bytes = b"", year: str = "") -> None:
+def _run(job_id: str, url: str, title: str, artist: str, album: str, year: str) -> None:
     with _jobs_lock:
         job = JOBS.get(job_id)
         if not job or job["cancel"].is_set():
@@ -206,8 +148,8 @@ def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
                     raise _Cancelled()
                 job.update(status="fingerprinting", progress=1.0)
 
-        res = import_track(url, title=title, artist=artist, thumb_url=thumb_url, album=album,
-                           cover_bytes=cover_bytes, year=year, progress_hook=hook, on_indexing=on_indexing)
+        res = import_track(url, title=title, artist=artist, album=album, year=year,
+                           progress_hook=hook, on_indexing=on_indexing)
         with _jobs_lock:
             job.update(**res, status="done")
     except Exception as e:  # noqa: BLE001 - surfaced to the poller
@@ -218,8 +160,7 @@ def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
                 job.update(status="failed", error=str(e)[:300])
 
 
-def start_import(url: str, title: str = "", artist: str = "", thumb_url: str = "",
-                 album: str = "", cover_bytes: bytes = b"", *, year: str = "") -> str:
+def start_import(url: str, *, title: str = "", artist: str = "", album: str = "", year: str = "") -> str:
     job_id = uuid.uuid4().hex[:12]
     with _jobs_lock:
         JOBS[job_id] = {
@@ -231,7 +172,7 @@ def start_import(url: str, title: str = "", artist: str = "", thumb_url: str = "
             "title": title,
             "source_url": url,
         }
-    _pool.submit(_run, job_id, url, title, artist, thumb_url, album, cover_bytes, year=year)
+    _pool.submit(_run, job_id, url, title, artist, album, year)
     return job_id
 
 

@@ -7,27 +7,18 @@ import logging
 import os
 import re
 import sqlite3
-import subprocess
-import tempfile
 import threading
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from fingerprint import SPEAKER_HOP, SR, UPLOAD_INPUT_OPTIONS, decode_mono, fingerprint_hashes, speaker_hashes
-from source_urls import canonical_track_url
+from fingerprint import SPEAKER_HOP, SR, decode_mono, fingerprint_hashes, speaker_hashes
+from source_urls import canonical_track_url, public_web_url
 
 DB_PATH = os.environ.get("DB_PATH", "/data/meta.db")
-COVER_DIR = os.environ.get("COVER_DIR", "/data/covers")
 PREVIEW_DIR = Path(DB_PATH).with_name("previews")
 logger = logging.getLogger(__name__)
 
-
-def cover_url(track_id: int) -> str:
-    """Public cover path, or empty when no cover is stored locally."""
-    if Path(COVER_DIR, f"{track_id}.jpg").exists():
-        return f"/api/covers/{track_id}.jpg"
-    return ""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tracks (
@@ -36,6 +27,7 @@ CREATE TABLE IF NOT EXISTS tracks (
   artist TEXT DEFAULT '',
   album TEXT DEFAULT '',
   source_url TEXT DEFAULT '',
+  cover_url TEXT NOT NULL DEFAULT '',
   year TEXT DEFAULT '',
   n_hashes INTEGER DEFAULT 0,
   created_at REAL DEFAULT 0
@@ -105,12 +97,13 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()]
-    if "year" not in cols or "album" not in cols:
+    metadata_columns = ("year", "album", "cover_url")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tracks)")}
+    if not cols.issuperset(metadata_columns):
         with conn:
             conn.execute("BEGIN IMMEDIATE")
             cols = {r[1] for r in conn.execute("PRAGMA table_info(tracks)")}
-            for col in ("year", "album"):
+            for col in metadata_columns:
                 if col not in cols:
                     conn.execute(f"ALTER TABLE tracks ADD COLUMN {col} TEXT DEFAULT ''")
     return conn
@@ -184,17 +177,6 @@ def _add_speaker_fingerprints(conn: sqlite3.Connection, track_id: int,
         conn.execute("UPDATE tracks SET n_hashes = n_hashes + ? WHERE id = ?", (len(hashes), track_id))
 
 
-def _preview_file(track_id: int) -> Path:
-    return PREVIEW_DIR / f"{track_id}.mp3"
-
-
-def _track_is_active(conn: sqlite3.Connection, track_id: int) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM tracks WHERE id = ? AND id NOT IN (SELECT track_id FROM catalog_removals)",
-        (track_id,),
-    ).fetchone() is not None
-
-
 def _find_source(conn: sqlite3.Connection, url: str) -> tuple[int] | None:
     conn.create_function("canonical_track_url", 1, canonical_track_url, deterministic=True)
     return conn.execute(
@@ -235,50 +217,12 @@ def _find_file(conn: sqlite3.Connection, sha256: str, legacy_blob: str,
     ).fetchone()
 
 
-def track_preview(track_id: int) -> Path | None:
-    path = _preview_file(track_id)
-    if not path.is_file():
-        return None
-    conn = connect()
-    try:
-        return path if _track_is_active(conn, track_id) else None
-    finally:
-        conn.close()
-
-
-def _save_preview(path: str | Path, track_id: int, duration: float, *, uploaded: bool = False) -> None:
-    dest = _preview_file(track_id)
-    if dest.is_file():
-        return
-    try:
-        PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=PREVIEW_DIR) as tmp:
-            clip = Path(tmp, "preview.mp3")
-            start = min(30, max(0, (duration - 30) / 3))
-            subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "error", "-abort_on", "empty_output",
-                 *(UPLOAD_INPUT_OPTIONS if uploaded else ()),
-                 "-i", str(path), "-ss", str(start),
-                 "-map", "0:a:0", "-map_metadata", "-1", "-t", "30", "-c:a", "libmp3lame",
-                 "-b:a", "96k", str(clip)],
-                check=True, timeout=30,
-            )
-            conn = connect()
-            try:
-                with conn:
-                    conn.execute("BEGIN IMMEDIATE")
-                    if _track_is_active(conn, track_id):
-                        clip.replace(dest)
-            finally:
-                conn.close()
-    except (OSError, sqlite3.Error, subprocess.SubprocessError):
-        logger.warning("Could not create the audio preview for track %s", track_id)
-
-
 def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
                 source_url: str = "", year: str = "", folder_path: str = "",
                 downloaded_from_source: bool = False, bandcamp_track_id: str = "",
-                *, file_sha256: str = "", canonical_source: bool = False) -> dict:
+                *, cover_url: str = "", file_sha256: str = "", canonical_source: bool = False) -> dict:
+    source_url = public_web_url(source_url)
+    cover_url = public_web_url(cover_url) if downloaded_from_source else ""
     samples = decode_mono(path, uploaded=bool(file_sha256))
     hashes = fingerprint_hashes(samples)
     speaker = speaker_hashes(samples)
@@ -326,18 +270,20 @@ def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
             track_id = duplicate[0]
             if speaker and downloaded_from_source:
                 _add_speaker_fingerprints(conn, track_id, speaker, speaker_blob)
+            if cover_url:
+                conn.execute("UPDATE tracks SET cover_url = ? WHERE id = ?", (cover_url, track_id))
             row = conn.execute(
-                "SELECT title, artist, album, source_url, year, n_hashes FROM tracks WHERE id = ?",
+                "SELECT title, artist, album, source_url, year, n_hashes, cover_url FROM tracks WHERE id = ?",
                 (track_id,),
             ).fetchone()
             result = {"track_id": track_id, "title": row[0], "artist": row[1],
                       "album": row[2] or "", "source_url": row[3], "year": row[4] or "",
-                      "n_hashes": row[5], "deduped": True}
+                      "n_hashes": row[5], "cover_url": row[6] or "", "deduped": True}
         else:
             cur = conn.execute(
-                "INSERT INTO tracks (title, artist, album, source_url, year, n_hashes, created_at)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (title, artist, album, source_url, year, len(hashes), time.time()),
+                "INSERT INTO tracks (title, artist, album, source_url, year, n_hashes, created_at, cover_url)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (title, artist, album, source_url, year, len(hashes), time.time(), cover_url),
             )
             track_id = cur.lastrowid or 0
             conn.execute(
@@ -350,15 +296,14 @@ def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
                 conn.execute("INSERT INTO folder_imports (path, track_id) VALUES (?, ?)",
                              (folder_path, track_id))
             result = {"track_id": track_id, "title": title, "artist": artist, "album": album,
-                      "source_url": source_url, "year": year,
+                      "source_url": source_url, "year": year, "cover_url": cover_url,
                       "n_hashes": len(hashes) + len(speaker), "deduped": False}
         if re.fullmatch(r"[0-9]+", bandcamp_track_id):
             conn.execute(
                 "INSERT OR IGNORE INTO bandcamp_tracks (track_id, provider_id) VALUES (?, ?)",
                 (track_id, bandcamp_track_id),
             )
-        save_local_audio = not downloaded_from_source and (not duplicate or not (source_url or folder_path))
-        if save_local_audio:
+        if digest and (not duplicate or not (source_url or folder_path)):
             conn.execute(
                 "INSERT OR IGNORE INTO track_file_hashes (track_id, sha256) VALUES (?, ?)",
                 (track_id, digest),
@@ -366,8 +311,6 @@ def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
         conn.commit()
     finally:
         conn.close()
-    if save_local_audio:
-        _save_preview(path, track_id, len(samples) / SR, uploaded=bool(file_sha256))
     return result
 
 
@@ -444,24 +387,20 @@ def match(hashes: list[tuple[int, int]], top_n: int = 5, min_votes: int = 10,
         out = []
         for track_id, votes, conf in scored[:top_n]:
             row = conn.execute(
-                "SELECT id, title, artist, album, source_url, year FROM tracks WHERE id=?",
+                "SELECT id, title, artist, album, source_url, year, cover_url FROM tracks WHERE id=?",
                 (track_id,),
             ).fetchone()
             if row:
                 out.append({"track_id": row[0], "title": row[1], "artist": row[2],
-                            "album": row[3] or "", "source_url": row[4],
+                            "album": row[3] or "", "source_url": public_web_url(row[4]),
                             "year": row[5] or "", "votes": votes,
-                            "confidence": round(conf, 3),
-                            "cover_url": cover_url(row[0])})
+                            "confidence": round(conf, 3), "cover_url": row[6] or ""})
         if out:
             top = out[0]
             top["match_status"] = _match_status(conn, top, scored, used_speaker)
-            if top["match_status"] == "likely":
-                track_id = top["track_id"]
-                if _preview_file(track_id).is_file():
-                    top["preview_url"] = f"/api/tracks/{track_id}/preview"
+            if top["source_url"] and top["match_status"] == "likely":
                 bandcamp = conn.execute(
-                    "SELECT provider_id FROM bandcamp_tracks WHERE track_id = ?", (track_id,),
+                    "SELECT provider_id FROM bandcamp_tracks WHERE track_id = ?", (top["track_id"],),
                 ).fetchone()
                 if bandcamp:
                     top["bandcamp_track_id"] = bandcamp[0]
@@ -484,7 +423,7 @@ def search_tracks(q: str, limit: int = 20, before: int | None = None) -> list[di
 
         conn.create_function("catalog_matches", 1, catalog_matches)
         rows = conn.execute(
-            "SELECT id, title, artist, album, source_url, year, n_hashes FROM tracks "
+            "SELECT id, title, artist, album, source_url, year, n_hashes, cover_url FROM tracks "
             "WHERE id < coalesce(?, 9223372036854775807)"
             " AND id NOT IN (SELECT track_id FROM catalog_removals)"
             " AND catalog_matches(title || ' ' || coalesce(artist, '') || ' ' || coalesce(album, '')"
@@ -493,8 +432,8 @@ def search_tracks(q: str, limit: int = 20, before: int | None = None) -> list[di
             (before, limit),
         ).fetchall()
         return [{"track_id": r[0], "title": r[1], "artist": r[2], "album": r[3] or "",
-                 "source_url": r[4], "year": r[5] or "", "n_hashes": r[6],
-                 "cover_url": cover_url(r[0])} for r in rows]
+                 "source_url": public_web_url(r[4]), "year": r[5] or "", "n_hashes": r[6],
+                 "cover_url": r[7] or ""} for r in rows]
     finally:
         conn.close()
 
@@ -517,7 +456,7 @@ def remove_track(track_id: int) -> bool:
     conn = connect()
     try:
         with conn:
-            # Keep the track ID reserved for folder bookkeeping and saved cover URLs.
+            # Keep the track ID reserved for folder bookkeeping.
             cursor = conn.execute(
                 "INSERT OR IGNORE INTO catalog_removals (track_id) SELECT id FROM tracks WHERE id = ?",
                 (track_id,),
@@ -529,7 +468,7 @@ def remove_track(track_id: int) -> bool:
             conn.execute("DELETE FROM bandcamp_tracks WHERE track_id = ?", (track_id,))
             conn.execute("DELETE FROM track_file_hashes WHERE track_id = ?", (track_id,))
         try:
-            _preview_file(track_id).unlink(missing_ok=True)
+            (PREVIEW_DIR / f"{track_id}.mp3").unlink(missing_ok=True)
         except OSError:
             logger.warning("Could not remove the audio preview for track %s", track_id)
         return True

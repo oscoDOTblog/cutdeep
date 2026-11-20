@@ -8,6 +8,19 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtu
 SOUNDCLOUD_HOSTS = {"soundcloud.com", "www.soundcloud.com", "m.soundcloud.com"}
 
 
+def public_web_url(value: str | None) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    try:
+        url = urlsplit(value)
+        if url.scheme in ("https", "http") and url.hostname and url.username is None:
+            return value
+    except ValueError:
+        pass
+    return ""
+
+
 def canonical_track_url(value: str | None) -> str | None:
     if not value:
         return None

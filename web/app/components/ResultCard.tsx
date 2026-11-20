@@ -12,7 +12,6 @@ type Props = {
   extra?: string;
   coverUrl?: string;
   scanResult?: MatchStatus | "alternative";
-  previewUrl?: string;
   bandcampTrackId?: string;
   /** Replaces the default "N% · M landmark votes" line (e.g. for ingests). */
   stats?: string;
@@ -20,20 +19,20 @@ type Props = {
 
 export default function ResultCard({
   title, artist, sourceUrl, conf, votes, year, album, extra, coverUrl, stats,
-  scanResult, previewUrl, bandcampTrackId,
+  scanResult, bandcampTrackId,
 }: Props) {
   const pct = Math.round(conf * 100);
   const band = conf >= 0.75 ? "high" : conf >= 0.4 ? "mid" : "low";
   return (
     <div className={scanResult ? "card row scan-result" : "card row"}>
-      {coverUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={coverUrl} alt="" className="tile-img" />
-      ) : (
-        <div className="tile" aria-hidden="true">
-          ◆
-        </div>
-      )}
+      <div className="tile" aria-hidden="true">
+        ◆
+        {coverUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img key={coverUrl} src={coverUrl} alt="" className="tile-img" loading="lazy"
+            onError={(event) => { event.currentTarget.hidden = true; }} />
+        )}
+      </div>
       <div className="rowbody">
         {scanResult && scanResult !== "alternative" && (
           <h2 className={scanResult === "likely" ? "scan-result-status likely" : "scan-result-status"}>
@@ -77,8 +76,8 @@ export default function ResultCard({
           </>
         )}
       </div>
-      {scanResult === "likely" && (
-        <MatchPlayer title={title} sourceUrl={sourceUrl} previewUrl={previewUrl} bandcampTrackId={bandcampTrackId} />
+      {scanResult === "likely" && sourceUrl && (
+        <MatchPlayer title={title} sourceUrl={sourceUrl} bandcampTrackId={bandcampTrackId} />
       )}
       {scanResult && (
         <details className="scan-result-details">

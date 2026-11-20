@@ -62,8 +62,6 @@ export default function Upload() {
   const [fileArtist, setFileArtist] = useState("");
   const [fileAlbum, setFileAlbum] = useState("");
   const [fileYear, setFileYear] = useState("");
-  const [coverFile, setCoverFile] = useState<File | null>(null);
-  const [coverName, setCoverName] = useState("");
   const [adding, setAdding] = useState(false);
   const [fileError, setFileError] = useState("");
   const [added, setAdded] = useState<{
@@ -72,8 +70,6 @@ export default function Upload() {
     artist: string;
     album: string;
     year: string;
-    cover_url: string;
-    source_url: string;
     n_hashes: number;
     deduped: boolean;
   } | null>(null);
@@ -86,9 +82,6 @@ export default function Upload() {
   const [linkArtist, setLinkArtist] = useState("");
   const [linkAlbum, setLinkAlbum] = useState("");
   const [linkYear, setLinkYear] = useState("");
-  const [linkCover, setLinkCover] = useState<File | null>(null);
-  const [linkCoverName, setLinkCoverName] = useState("");
-  const [linkCoverPreview, setLinkCoverPreview] = useState("");
   const [linkError, setLinkError] = useState("");
   const [starting, setStarting] = useState(false);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -99,12 +92,6 @@ export default function Upload() {
   const [jobAction, setJobAction] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const job = jobs.find((j) => j.job_id === currentJobId);
-
-  useEffect(() => {
-    return () => {
-      if (linkCoverPreview) URL.revokeObjectURL(linkCoverPreview);
-    };
-  }, [linkCoverPreview]);
 
   useEffect(() => {
     if (mode !== "link") return;
@@ -151,9 +138,6 @@ export default function Upload() {
   }
 
   function resetLinkDetails() {
-    setLinkCoverPreview("");
-    setLinkCover(null);
-    setLinkCoverName("");
     setMeta(null);
     setCurrentJobId(null);
     setLinkError("");
@@ -174,8 +158,6 @@ export default function Upload() {
     setFileArtist("");
     setFileAlbum("");
     setFileYear("");
-    setCoverFile(null);
-    setCoverName("");
     setFileError("");
     setAdded(null);
   }
@@ -192,7 +174,6 @@ export default function Upload() {
       fd.append("artist", fileArtist.trim());
       fd.append("album", fileAlbum.trim());
       fd.append("year", fileYear.trim());
-      if (coverFile) fd.append("cover", coverFile, coverFile.name);
       const res = await fetch("/api/ingest", { method: "POST", body: fd });
       const { ok, data } = await readJson(res);
       if (!ok) throw new Error(apiError(data, "Could not add to catalog"));
@@ -202,8 +183,6 @@ export default function Upload() {
         artist: data.artist || "",
         album: data.album || "",
         year: data.year || "",
-        cover_url: data.cover_url || "",
-        source_url: "",
         n_hashes: data.n_hashes ?? 0,
         deduped: Boolean(data.deduped),
       });
@@ -252,8 +231,6 @@ export default function Upload() {
       fd.append("artist", linkArtist.trim());
       fd.append("album", linkAlbum.trim());
       fd.append("year", linkYear.trim());
-      fd.append("thumbnail", meta.thumbnail);
-      if (linkCover) fd.append("cover", linkCover, linkCover.name);
       const res = await fetch("/api/link/import", { method: "POST", body: fd });
       const started = await readJson(res);
       if (!started.ok) throw new Error(apiError(started.data, "Could not start import"));
@@ -362,42 +339,15 @@ export default function Upload() {
               <div className="t hud">
                 <span className="dia">◆</span> Review track details
               </div>
-              {linkCoverPreview ? (
+              {meta.thumbnail && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={linkCoverPreview} alt="Custom cover preview" className="thumb" />
-              ) : (
-                meta.thumbnail && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={meta.thumbnail} alt="" className="thumb" />
-                )
+                <img src={meta.thumbnail} alt="" className="thumb" />
               )}
               <fieldset className="grid" disabled={starting || Boolean(job && !terminal(job)) || job?.status === "done"}>
                 <label>Title<input value={linkTitle} onChange={(e) => setLinkTitle(e.target.value)} /></label>
                 <label>Artist / DJ<input value={linkArtist} onChange={(e) => setLinkArtist(e.target.value)} /></label>
                 <label>Album<input value={linkAlbum} onChange={(e) => setLinkAlbum(e.target.value)} /></label>
                 <label>Release year<input value={linkYear} onChange={(e) => setLinkYear(e.target.value)} inputMode="numeric" placeholder="YYYY" /></label>
-                <span className="file-wrap">
-                  <span className="file-btn" aria-hidden="true">
-                    ◆ {linkCoverName || "Choose album cover"}
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    aria-label="Choose album cover"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) {
-                        setLinkCover(f);
-                        setLinkCoverName(f.name);
-                        setLinkCoverPreview(URL.createObjectURL(f));
-                      } else {
-                        setLinkCover(null);
-                        setLinkCoverName("");
-                        setLinkCoverPreview("");
-                      }
-                    }}
-                  />
-                </span>
               </fieldset>
               {(!job || job.status === "failed" || job.status === "cancelled") && (
                 <button type="button" className="btn-amber" onClick={startImport} disabled={starting}>
@@ -517,8 +467,6 @@ export default function Upload() {
                     setFileArtist("");
                     setFileAlbum("");
                     setFileYear("");
-                    setCoverFile(null);
-                    setCoverName("");
                     setAdded(null);
                     setFileError("");
                     e.currentTarget.value = "";
@@ -539,24 +487,6 @@ export default function Upload() {
                 <label>Artist / DJ<input value={fileArtist} onChange={(e) => setFileArtist(e.target.value)} /></label>
                 <label>Album<input value={fileAlbum} onChange={(e) => setFileAlbum(e.target.value)} /></label>
                 <label>Year<input value={fileYear} onChange={(e) => setFileYear(e.target.value)} inputMode="numeric" /></label>
-                <span className="file-wrap" key={audioFile.name + audioFile.lastModified}>
-                  <span className="file-btn" aria-hidden="true">
-                    ◆ {coverName || "Choose album cover"}
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    aria-label="Choose album cover"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) {
-                        setCoverFile(f);
-                        setCoverName(f.name);
-                      }
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                </span>
               </fieldset>
               <button type="button" className="btn-amber" onClick={addToCatalog} disabled={adding}>
                 {adding ? "Adding…" : "◆ Add to catalog"}
@@ -576,7 +506,6 @@ export default function Upload() {
                 votes={0}
                 year={added.year}
                 album={added.album}
-                coverUrl={added.cover_url}
                 stats={`${added.n_hashes} landmarks indexed`}
               />
             </section>

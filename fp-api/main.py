@@ -10,8 +10,7 @@ from threading import Event, Thread
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.datastructures import UploadFile as FormUpload
 
@@ -36,10 +35,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
 
 app = FastAPI(title="cutdeep fp-api", lifespan=lifespan)
-
-Path(store.COVER_DIR).mkdir(parents=True, exist_ok=True)
-app.mount("/covers", StaticFiles(directory=store.COVER_DIR), name="covers")
-
 
 @app.get("/health")
 def health() -> dict:
@@ -109,7 +104,6 @@ def ingest(
     album: str = Form(""),
     source_url: str = Form(""),
     year: str = Form(""),
-    cover: UploadFile | None = File(default=None),
 ) -> dict:
     suffix = Path(file.filename or "audio").suffix or ".mp3"
     try:
@@ -121,9 +115,6 @@ def ingest(
                                     source_url=source_url, year=year)
     except Exception as e:  # noqa: BLE001 - surface decode errors as 400s
         raise HTTPException(status_code=400, detail=f"ingest failed: {e}")
-    if cover is not None and not res["deduped"]:
-        link_import.save_cover_bytes(res["track_id"], cover.file.read())
-    res["cover_url"] = store.cover_url(res["track_id"])
     return res
 
 
@@ -163,10 +154,8 @@ async def link_import_start(
     url: str = Form(""),
     title: str = Form(""),
     artist: str = Form(""),
-    thumbnail: str = Form(""),
     album: str = Form(""),
     year: str = Form(""),
-    cover: UploadFile | None = File(default=None),
 ) -> dict:
     url = url.strip()
     if not url:
@@ -174,8 +163,7 @@ async def link_import_start(
     year = year.strip()
     if year and not re.fullmatch(r"[1-9][0-9]{3}", year):
         raise HTTPException(status_code=400, detail="Enter a four-digit release year.")
-    raw = await cover.read() if cover is not None else b""
-    job_id = link_import.start_import(url, title, artist, thumbnail, album, raw, year=year)
+    job_id = link_import.start_import(url, title=title, artist=artist, album=album, year=year)
     return {"job_id": job_id}
 
 
@@ -231,14 +219,6 @@ def update_track(track_id: int, details: TrackDetails) -> dict:
     if not store.update_track(track_id, title, artist, album, year):
         raise HTTPException(status_code=404, detail="This track is no longer in the catalog.")
     return {"title": title, "artist": artist, "album": album, "year": year}
-
-
-@app.get("/tracks/{track_id}/preview")
-def get_track_preview(track_id: int) -> FileResponse:
-    path = store.track_preview(track_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="Audio preview unavailable.")
-    return FileResponse(path, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.delete("/tracks/{track_id}")

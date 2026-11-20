@@ -17,6 +17,7 @@ Verify the four-tab app against the local production build and fix issues encoun
 | Covers and jobs | An optional thumbnail failure could mark an already-ingested track as failed. Concurrent source deduplication could produce duplicate rows. | Make cover failures nonfatal, publish covers atomically, serialize source deduplication, and report the stored track's details for duplicate imports. |
 | Mobile and keyboard | Amber controls used low-contrast text, metadata fields lost their labels on input, and fixed navigation could crowd narrow screens. | Improve contrast, preserve field labels and visible focus, and account for narrow viewports and bottom safe areas. |
 | Quickstart | The command-line seeding example targeted an internal port. | Route the example through the web service's exposed ingest endpoint. |
+| Bandcamp | The Docker image lacked the optional yt-dlp dependency required by the Bandcamp extractor. | Add the documented `curl-cffi` extra. Retesting reached Bandcamp, which returned a client challenge for the sampled track. |
 
 ## Verification
 
@@ -28,7 +29,12 @@ Verify the four-tab app against the local production build and fix issues encoun
 - [x] Library persists a successful scan and keeps a removed legacy scan deleted after reload.
 - [x] Search paginates, finds tracks older than the newest 200 entries, and matches album names case-insensitively with accented characters.
 - [x] Upload adds audio with a cover that the web service serves as JPEG. Link import runs through yt-dlp against local HTTP audio, preserves one catalog entry for the same source, and clears finished jobs.
+- [x] All three services build and start in an isolated Docker Compose project. The worker ingests from the read-only music mount once across repeated polls, and the web API matches an offset clip.
+- [x] Firefox at 320 px passes record and cancel, microphone cleanup on tab navigation, matching a synthetic audio stream through its native recorder, saving a Library scan, Search, and uploading a file with a cover.
+- [x] An offset synthetic clip still matches the correct reference with added white noise at 15, 5, and 0 dB signal-to-noise ratio.
+- [x] A live YouTube link and a live SoundCloud link complete metadata lookup and import into the isolated catalog.
+- [ ] Verify a live Bandcamp import. Metadata lookup for Kevin MacLeod's “Monkeys Spinning Monkeys (104bpm)” is blocked by a challenge page.
 
 ## Remaining coverage
 
-The smoke test used a temporary catalog, Chromium's synthetic microphone, and a local media URL. Physical microphones, noisy venue recordings, other browsers, live provider URLs, and a rebuilt Docker Compose stack remain unverified.
+Physical microphones, actual venue recordings, and browser engines beyond Chromium and Firefox still need device testing.

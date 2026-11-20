@@ -24,9 +24,12 @@ export async function proxyJson(req: Request, target: string) {
     );
   }
   const text = await upstream.text();
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const location = upstream.headers.get("Location");
+  if (location) headers.set("Location", location);
   return new Response(text || '{"detail":"empty reply from matching service"}', {
     status: upstream.status,
-    headers: { "Content-Type": "application/json" },
+    headers,
   });
 }
 

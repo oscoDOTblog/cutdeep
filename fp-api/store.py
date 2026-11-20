@@ -1,6 +1,7 @@
 """SQLite metadata + fingerprint storage with in-memory inverted index."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +14,8 @@ import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from fingerprint import SPEAKER_HOP, SR, decode_mono, fingerprint_hashes, speaker_hashes
+from fingerprint import SPEAKER_HOP, SR, UPLOAD_INPUT_OPTIONS, decode_mono, fingerprint_hashes, speaker_hashes
+from source_urls import canonical_track_url
 
 DB_PATH = os.environ.get("DB_PATH", "/data/meta.db")
 COVER_DIR = os.environ.get("COVER_DIR", "/data/covers")
@@ -55,6 +57,25 @@ CREATE TABLE IF NOT EXISTS folder_imports (
   path TEXT PRIMARY KEY,
   track_id INTEGER NOT NULL REFERENCES tracks(id)
 );
+CREATE TABLE IF NOT EXISTS track_file_hashes (
+  track_id INTEGER NOT NULL REFERENCES tracks(id),
+  sha256 TEXT NOT NULL,
+  PRIMARY KEY (track_id, sha256)
+);
+CREATE INDEX IF NOT EXISTS track_file_hash_sha256 ON track_file_hashes(sha256);
+CREATE TABLE IF NOT EXISTS catalog_imports (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('url', 'file')),
+  source TEXT NOT NULL,
+  details TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'processing', 'ready', 'failed')),
+  created_at REAL NOT NULL,
+  track_id INTEGER REFERENCES tracks(id),
+  deduped INTEGER,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS catalog_import_source ON catalog_imports(kind, source, created_at);
+CREATE INDEX IF NOT EXISTS catalog_import_queue ON catalog_imports(status, created_at);
 CREATE TABLE IF NOT EXISTS catalog_removals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   track_id INTEGER NOT NULL UNIQUE REFERENCES tracks(id)
@@ -174,6 +195,46 @@ def _track_is_active(conn: sqlite3.Connection, track_id: int) -> bool:
     ).fetchone() is not None
 
 
+def _find_source(conn: sqlite3.Connection, url: str) -> tuple[int] | None:
+    conn.create_function("canonical_track_url", 1, canonical_track_url, deterministic=True)
+    return conn.execute(
+        "SELECT t.id FROM tracks t JOIN fingerprints f ON f.track_id = t.id"
+        " WHERE t.source_url != '' AND canonical_track_url(t.source_url) = ?"
+        " ORDER BY t.id LIMIT 1",
+        (url,),
+    ).fetchone()
+
+
+def find_source_track(url: str) -> int | None:
+    conn = connect()
+    try:
+        found = _find_source(conn, url)
+        return found[0] if found else None
+    finally:
+        conn.close()
+
+
+def _find_file(conn: sqlite3.Connection, sha256: str, legacy_blob: str,
+               speaker_blob: str) -> tuple[int] | None:
+    known = conn.execute(
+        "SELECT h.track_id FROM track_file_hashes h JOIN fingerprints f ON f.track_id = h.track_id"
+        " WHERE h.sha256 = ? ORDER BY h.track_id LIMIT 1",
+        (sha256,),
+    ).fetchone()
+    if known:
+        return known
+    # Older file imports have no byte digest. Reuse an exact stored audio
+    # fingerprint, including speaker landmarks when the reference has them.
+    return conn.execute(
+        "SELECT f.track_id FROM fingerprints f JOIN tracks t ON t.id = f.track_id"
+        " LEFT JOIN speaker_fingerprints s ON s.track_id = f.track_id"
+        " LEFT JOIN track_file_hashes h ON h.track_id = f.track_id"
+        " WHERE t.source_url = '' AND h.track_id IS NULL AND f.hashes = ?"
+        " AND (s.hashes IS NULL OR s.hashes = ?) ORDER BY f.track_id LIMIT 1",
+        (legacy_blob, speaker_blob),
+    ).fetchone()
+
+
 def track_preview(track_id: int) -> Path | None:
     path = _preview_file(track_id)
     if not path.is_file():
@@ -185,7 +246,7 @@ def track_preview(track_id: int) -> Path | None:
         conn.close()
 
 
-def _save_preview(path: str | Path, track_id: int, duration: float) -> None:
+def _save_preview(path: str | Path, track_id: int, duration: float, *, uploaded: bool = False) -> None:
     dest = _preview_file(track_id)
     if dest.is_file():
         return
@@ -196,6 +257,7 @@ def _save_preview(path: str | Path, track_id: int, duration: float) -> None:
             start = min(30, max(0, (duration - 30) / 3))
             subprocess.run(
                 ["ffmpeg", "-nostdin", "-v", "error", "-abort_on", "empty_output",
+                 *(UPLOAD_INPUT_OPTIONS if uploaded else ()),
                  "-i", str(path), "-ss", str(start),
                  "-map", "0:a:0", "-map_metadata", "-1", "-t", "30", "-c:a", "libmp3lame",
                  "-b:a", "96k", str(clip)],
@@ -215,14 +277,19 @@ def _save_preview(path: str | Path, track_id: int, duration: float) -> None:
 
 def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
                 source_url: str = "", year: str = "", folder_path: str = "",
-                downloaded_from_source: bool = False, bandcamp_track_id: str = "") -> dict:
-    samples = decode_mono(path)
+                downloaded_from_source: bool = False, bandcamp_track_id: str = "",
+                *, file_sha256: str = "", canonical_source: bool = False) -> dict:
+    samples = decode_mono(path, uploaded=bool(file_sha256))
     hashes = fingerprint_hashes(samples)
     speaker = speaker_hashes(samples)
     if not hashes:
         raise ValueError("no fingerprints extracted — unsupported or silent audio")
     legacy_blob = json.dumps(hashes)
     speaker_blob = json.dumps(speaker)
+    digest = file_sha256
+    if not (downloaded_from_source or digest):
+        with open(path, "rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
     conn = connect()
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -236,7 +303,11 @@ def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
             ).fetchall()
             for (track_id,) in older_copies:
                 _add_speaker_fingerprints(conn, track_id, speaker, speaker_blob)
-        if source_url or folder_path:
+        if canonical_source:
+            duplicate = _find_source(conn, source_url)
+        elif file_sha256:
+            duplicate = _find_file(conn, file_sha256, legacy_blob, speaker_blob)
+        elif source_url or folder_path:
             duplicate = conn.execute(
                 "SELECT id FROM tracks"
                 " WHERE (? != '' AND source_url = ?"
@@ -286,11 +357,17 @@ def ingest_file(path: str | Path, title: str, artist: str = "", album: str = "",
                 "INSERT OR IGNORE INTO bandcamp_tracks (track_id, provider_id) VALUES (?, ?)",
                 (track_id, bandcamp_track_id),
             )
+        save_local_audio = not downloaded_from_source and (not duplicate or not (source_url or folder_path))
+        if save_local_audio:
+            conn.execute(
+                "INSERT OR IGNORE INTO track_file_hashes (track_id, sha256) VALUES (?, ?)",
+                (track_id, digest),
+            )
         conn.commit()
     finally:
         conn.close()
-    if not downloaded_from_source and (not duplicate or not (source_url or folder_path)):
-        _save_preview(path, track_id, len(samples) / SR)
+    if save_local_audio:
+        _save_preview(path, track_id, len(samples) / SR, uploaded=bool(file_sha256))
     return result
 
 
@@ -450,6 +527,7 @@ def remove_track(track_id: int) -> bool:
             conn.execute("DELETE FROM fingerprints WHERE track_id = ?", (track_id,))
             conn.execute("DELETE FROM speaker_fingerprints WHERE track_id = ?", (track_id,))
             conn.execute("DELETE FROM bandcamp_tracks WHERE track_id = ?", (track_id,))
+            conn.execute("DELETE FROM track_file_hashes WHERE track_id = ?", (track_id,))
         try:
             _preview_file(track_id).unlink(missing_ok=True)
         except OSError:

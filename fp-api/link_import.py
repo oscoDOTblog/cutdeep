@@ -12,6 +12,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Callable
 
 import store
 
@@ -125,10 +126,58 @@ def save_cover_bytes(track_id: int, raw: bytes) -> str:
         return ""
 
 
-def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
-         album: str = "", cover_bytes: bytes = b"", year: str = "") -> None:
+def import_track(
+    url: str, *, title: str = "", artist: str = "", thumb_url: str = "", album: str = "",
+    cover_bytes: bytes = b"", year: str = "", canonical_source: bool = False,
+    progress_hook: Callable[[dict], None] | None = None,
+    on_indexing: Callable[[], None] | None = None,
+) -> dict:
     import yt_dlp
 
+    # Decode the provider's download directly. No intermediate transcode is needed.
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "format": "bestaudio/best",
+        "socket_timeout": 30,
+        "progress_hooks": [progress_hook] if progress_hook else [],
+    }
+    if canonical_source:
+        opts["allowed_extractors"] = ["youtube", "soundcloud", "bandcamp"]
+    with tempfile.TemporaryDirectory(prefix="cutdeep-link-") as tmpdir:
+        opts["outtmpl"] = f"{tmpdir}/track.%(ext)s"
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+        if on_indexing:
+            on_indexing()
+        files = sorted(Path(tmpdir).glob("track.*"), key=lambda p: p.stat().st_size)
+        if not files:
+            raise RuntimeError("The source did not provide downloadable audio.")
+        name = title or info.get("title") or "untitled"
+        who = artist or info.get("artist") or info.get("uploader") or ""
+        if canonical_source:
+            album = album or info.get("album") or ""
+            release_year = info.get("release_year")
+            if not year and isinstance(release_year, int) and 1000 <= release_year <= 9999:
+                year = str(release_year)
+        bandcamp_id = str(info.get("id") or "") if info.get("extractor_key") == "Bandcamp" else ""
+        res = store.ingest_file(
+            files[-1], name, artist=who, album=album, source_url=url, year=year,
+            downloaded_from_source=True, bandcamp_track_id=bandcamp_id,
+            canonical_source=canonical_source,
+        )
+    track_id = res["track_id"]
+    if not res["deduped"]:
+        if cover_bytes:
+            save_cover_bytes(track_id, cover_bytes)
+        else:
+            save_cover(track_id, thumb_url or info.get("thumbnail") or "")
+    return {**res, "cover_url": store.cover_url(track_id)}
+
+
+def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
+         album: str = "", cover_bytes: bytes = b"", year: str = "") -> None:
     with _jobs_lock:
         job = JOBS.get(job_id)
         if not job or job["cancel"].is_set():
@@ -151,40 +200,16 @@ def _run(job_id: str, url: str, title: str, artist: str, thumb_url: str = "",
                         eta_s=max(0, round((total - done) / (done / elapsed))) if total and done else None,
                     )
 
-        # No transcode: the fingerprinter decodes any format directly,
-        # so ingesting the download as-is skips a full ffmpeg pass.
-        opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "format": "bestaudio/best",
-            "progress_hooks": [hook],
-            "socket_timeout": 30,
-        }
-        with tempfile.TemporaryDirectory(prefix="cutdeep-link-") as tmpdir:
-            opts["outtmpl"] = f"{tmpdir}/track.%(ext)s"
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+        def on_indexing() -> None:
             with _jobs_lock:
                 if job["cancel"].is_set():
                     raise _Cancelled()
                 job.update(status="fingerprinting", progress=1.0)
-            files = sorted(Path(tmpdir).glob("track.*"), key=lambda p: p.stat().st_size)
-            if not files:
-                raise RuntimeError("download produced no audio file")
-            name = title or info.get("title") or "untitled"
-            who = artist or info.get("artist") or info.get("uploader") or ""
-            bandcamp_id = str(info.get("id") or "") if info.get("extractor_key") == "Bandcamp" else ""
-            res = store.ingest_file(files[-1], name, artist=who, album=album, source_url=url,
-                                    year=year, downloaded_from_source=True, bandcamp_track_id=bandcamp_id)
-        track_id = res["track_id"]
-        if not res["deduped"]:
-            if cover_bytes:
-                save_cover_bytes(track_id, cover_bytes)
-            else:
-                save_cover(track_id, thumb_url or info.get("thumbnail") or "")
+
+        res = import_track(url, title=title, artist=artist, thumb_url=thumb_url, album=album,
+                           cover_bytes=cover_bytes, year=year, progress_hook=hook, on_indexing=on_indexing)
         with _jobs_lock:
-            job.update(**res, status="done", cover_url=store.cover_url(track_id))
+            job.update(**res, status="done")
     except Exception as e:  # noqa: BLE001 - surfaced to the poller
         with _jobs_lock:
             if job["cancel"].is_set():

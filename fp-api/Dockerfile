@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY fingerprint.py store.py main.py worker.py link_import.py ./
+COPY fingerprint.py store.py main.py worker.py link_import.py catalog_import.py source_urls.py ./
 ENV DB_PATH=/data/meta.db
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

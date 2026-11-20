@@ -23,14 +23,20 @@ SPEAKER_FRAME = 2048
 SPEAKER_HOP = 256
 SPEAKER_BANDS = (42, 67, 105, 163, 251, 386, 591, 815)
 
+# Uploaded references are self-contained media, with no external resources.
+UPLOAD_INPUT_OPTIONS = (
+    "-protocol_whitelist", "file",
+    "-format_whitelist", "aac,aiff,amr,ape,asf,au,caf,dsf,flac,matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mp3,ogg,wav,wv",
+)
 
-def decode_mono(path: str | Path) -> np.ndarray:
+
+def decode_mono(path: str | Path, *, uploaded: bool = False) -> np.ndarray:
     """Decode any audio file to mono 11025Hz float32 via ffmpeg."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out = tmp.name
     try:
         subprocess.run(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(path),
+            ["ffmpeg", "-v", "error", "-y", *(UPLOAD_INPUT_OPTIONS if uploaded else ()), "-i", str(path),
              "-ac", "1", "-ar", str(SR), "-f", "f32le", out],
             check=True,
         )

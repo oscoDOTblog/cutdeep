@@ -1,4 +1,5 @@
 import type { MatchStatus } from "../lib/scans";
+import ListenOn from "./ListenOn";
 import MatchPlayer from "./MatchPlayer";
 
 type Props = {
@@ -46,10 +47,9 @@ export default function ResultCard({
         {scanResult ? (
           <>
             {(album || year) && <div className="a">{[album, year].filter(Boolean).join(" · ")}</div>}
+            {extra && <div className="meta">{extra}</div>}
             {sourceUrl && scanResult !== "likely" && (
-              <a className="scan-result-source" href={sourceUrl} target="_blank" rel="noreferrer">
-                Open track <span aria-hidden="true">↗</span>
-              </a>
+              <ListenOn artist={artist} title={title} sourceUrl={sourceUrl} />
             )}
           </>
         ) : (
@@ -77,7 +77,7 @@ export default function ResultCard({
         )}
       </div>
       {scanResult === "likely" && sourceUrl && (
-        <MatchPlayer title={title} sourceUrl={sourceUrl} bandcampTrackId={bandcampTrackId} />
+        <MatchPlayer artist={artist} title={title} sourceUrl={sourceUrl} bandcampTrackId={bandcampTrackId} />
       )}
       {scanResult && (
         <details className="scan-result-details">

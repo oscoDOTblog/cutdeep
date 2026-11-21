@@ -1,8 +1,10 @@
 "use client";
 
 import { useId, useState } from "react";
+import ListenOn from "./ListenOn";
 
 type Props = {
+  artist: string;
   title: string;
   sourceUrl: string;
   bandcampTrackId?: string;
@@ -56,15 +58,13 @@ function getEmbed(sourceUrl: string, bandcampTrackId?: string) {
   }
 }
 
-export default function MatchPlayer({ title, sourceUrl, bandcampTrackId }: Props) {
+export default function MatchPlayer({ artist, title, sourceUrl, bandcampTrackId }: Props) {
   const playerId = useId();
   const [open, setOpen] = useState(false);
   const embed = getEmbed(sourceUrl, bandcampTrackId);
   const sourceLink = (
-    <a className={embed ? "match-player-source" : "scan-result-source"}
-      href={sourceUrl} target="_blank" rel="noreferrer">
-      Open track <span aria-hidden="true">↗</span>
-    </a>
+    <ListenOn artist={artist} title={title} sourceUrl={sourceUrl}
+      className={embed ? "match-player-source" : "scan-result-source"} />
   );
 
   if (!embed) {

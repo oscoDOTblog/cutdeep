@@ -9,6 +9,23 @@ docker compose up --build
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### Password for Upload and Settings
+
+To enable the lock, put a long password in a `.env` file beside
+`docker-compose.yml`, then run `docker compose up --build -d web`.
+
+```dotenv
+CUTDEEP_ADMIN_PASSWORD='replace-with-your-password'
+```
+
+Sign in once to unlock Upload and Settings. The browser remembers the
+session for 30 days. **Log out** in Settings clears it from that browser.
+Changing the password expires existing sessions. Scan, Search, and Library
+remain available without signing in.
+
+When the lock is enabled, automation can call the protected API routes with
+an `Authorization: Bearer <password>` header. Use HTTPS for remote access.
+
 ## Seed the catalog
 
 Open Upload to import a link or add a reference audio file. You can also drop
@@ -53,7 +70,8 @@ whether its run reused an existing catalog track in `deduped`.
 
 Record 10s in the browser → Next.js forwards the clip to `fp-api` →
 landmark fingerprint (spectrogram peaks → peak-pair hashes → offset voting)
-→ ranked remix candidates. Confident matches are saved in the device's Library.
+→ ranked remix candidates. The top result is saved in the device's Library
+when landmark overlap exceeds 10%.
 
 ## Layout
 

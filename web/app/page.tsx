@@ -5,7 +5,7 @@ import Link from "next/link";
 import LinkStart from "./components/LinkStart";
 import ResultCard from "./components/ResultCard";
 import { identifyClip } from "./lib/api";
-import { saveScan, type Candidate } from "./lib/scans";
+import { MIN_LIBRARY_OVERLAP, saveScan, type Candidate } from "./lib/scans";
 
 const SCAN_LENGTHS = [10, 20] as const;
 type ScanLength = (typeof SCAN_LENGTHS)[number];
@@ -80,6 +80,7 @@ export default function Home() {
   const [signal, setSignal] = useState<number | null>();
   const [error, setError] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [librarySave, setLibrarySave] = useState<"saved" | "failed">();
   const session = useRef<Recording | null>(null);
 
   function abandon() {
@@ -96,6 +97,7 @@ export default function Home() {
     if (session.current) return;
     setError("");
     setCandidates([]);
+    setLibrarySave(undefined);
     setSecs(0);
     setSignal(undefined);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -142,8 +144,8 @@ export default function Home() {
           if (session.current !== active) return;
           setCandidates(found);
           const top = found[0];
-          if (top && top.confidence >= 0.4) {
-            saveScan({
+          if (top && top.confidence > MIN_LIBRARY_OVERLAP) {
+            const saved = saveScan({
               ts: Date.now(),
               title: top.title,
               artist: top.artist,
@@ -153,7 +155,10 @@ export default function Home() {
               conf: top.confidence,
               votes: top.votes,
               coverUrl: top.cover_url ?? "",
+              matchStatus: top.match_status,
+              bandcampTrackId: top.bandcamp_track_id,
             });
+            setLibrarySave(saved ? "saved" : "failed");
           }
         } catch {
           if (session.current !== active) return;
@@ -271,6 +276,12 @@ export default function Home() {
           ) : (
             <>
               <ScanResult candidate={top} primary />
+              {librarySave === "saved" && (
+                <p className="status" role="status">Saved to <Link href="/library">Library</Link>.</p>
+              )}
+              {librarySave === "failed" && (
+                <p className="err" role="status">Could not save this scan on this device.</p>
+              )}
               {otherResults.length > 0 && (
                 <details className="scan-alternatives" open={top.match_status !== "likely"}>
                   <summary>Other results ({otherResults.length})</summary>

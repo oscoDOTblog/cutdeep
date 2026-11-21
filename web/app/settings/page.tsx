@@ -1,6 +1,10 @@
 import Link from "next/link";
+import { adminPasswordConfigured, requireAdminPage } from "../lib/admin-auth";
+import { logout } from "../unlock/actions";
 
-export default function Settings() {
+export default async function Settings() {
+  await requireAdminPage("/settings");
+
   return (
     <>
       <h1 className="sec"><span className="dia" aria-hidden="true">◆</span> Settings</h1>
@@ -11,6 +15,11 @@ export default function Settings() {
         </div>
         <span className="settings-arrow" aria-hidden="true">›</span>
       </Link>
+      {adminPasswordConfigured() && (
+        <form className="settings-logout" action={logout}>
+          <button className="secondary" type="submit">Log out</button>
+        </form>
+      )}
     </>
   );
 }

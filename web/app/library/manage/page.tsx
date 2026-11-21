@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import ResultCard from "../../components/ResultCard";
+import SavedScanCard from "../../components/SavedScanCard";
 import { loadScans, removeScan, updateScan, type Scan } from "../../lib/scans";
 
 export default function ScannedLibrary() {
@@ -120,18 +120,8 @@ export default function ScannedLibrary() {
       {scans && scans.length > 0 && matches.length === 0 && <p className="empty">No scans match your search.</p>}
       <ul className="scan-list">
         {matches.map((scan, index) => (
-          <li key={`${scan.ts}-${index}`}>
-            <ResultCard
-              title={scan.title}
-              artist={scan.artist}
-              album={scan.album}
-              year={scan.year}
-              sourceUrl={scan.sourceUrl}
-              coverUrl={scan.coverUrl}
-              conf={scan.conf}
-              votes={scan.votes}
-              extra={scan.ts ? new Date(scan.ts).toLocaleString() : undefined}
-            />
+          <li className="saved-scan-row" key={`${scan.ts}-${index}`}>
+            <SavedScanCard scan={scan} />
             <div className="scan-actions">
               <button type="button" aria-label={`Edit details for ${scan.title}`} onClick={() => openAction("edit", scan)}>
                 Edit

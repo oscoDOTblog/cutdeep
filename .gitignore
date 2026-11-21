@@ -1,4 +1,6 @@
 .DS_Store
+.env*
+!.env.example
 fp-api/.venv/
 fp-api/__pycache__/
 web/node_modules/

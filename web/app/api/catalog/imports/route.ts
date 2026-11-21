@@ -1,6 +1,10 @@
 import { fpUrl, proxyJson } from "../../_proxy";
+import { requireAdminApi } from "../../../lib/admin-auth";
 
 export async function POST(req: Request) {
+  const denied = await requireAdminApi(req);
+  if (denied) return denied;
+
   const type = req.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
   if (type !== "application/json" && type !== "multipart/form-data") {
     return Response.json({ detail: "Send a JSON track URL or a multipart audio file." }, { status: 415 });

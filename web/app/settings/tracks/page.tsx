@@ -1,7 +1,10 @@
 import Link from "next/link";
 import CatalogBrowser from "../../components/CatalogBrowser";
+import { requireAdminPage } from "../../lib/admin-auth";
 
-export default function UploadedTracks() {
+export default async function UploadedTracks() {
+  await requireAdminPage("/settings/tracks");
+
   return (
     <>
       <Link className="settings-back" href="/settings"><span aria-hidden="true">‹</span> Settings</Link>

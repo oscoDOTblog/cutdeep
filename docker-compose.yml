@@ -5,6 +5,7 @@ services:
     environment:
       FP_API_URL: http://fp-api:8000
       DB_PATH: /data/meta.db
+      CUTDEEP_ADMIN_PASSWORD: ${CUTDEEP_ADMIN_PASSWORD:-}
     volumes: ["db:/data", "tmp-clips:/tmp/clips"]
     depends_on: [fp-api]
 

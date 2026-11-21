@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import ResultCard from "../components/ResultCard";
+import SavedScanCard from "../components/SavedScanCard";
 import { loadScans, removeScan, type Scan } from "../lib/scans";
 
 function dayKey(ts: number) {
@@ -65,17 +65,7 @@ export default function Library() {
           {items.map((s, index) => (
             <div key={`${s.ts}-${index}`} className="lib-row">
               <div className="lib-row-body">
-                <ResultCard
-                  title={s.title}
-                  artist={s.artist}
-                  album={s.album}
-                  year={s.year}
-                  sourceUrl={s.sourceUrl}
-                  conf={s.conf}
-                  votes={s.votes}
-                  extra={s.ts ? new Date(s.ts).toLocaleString() : undefined}
-                  coverUrl={s.coverUrl}
-                />
+                <SavedScanCard scan={s} />
               </div>
               <button
                 type="button"

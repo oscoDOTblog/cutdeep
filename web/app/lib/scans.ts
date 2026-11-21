@@ -8,6 +8,8 @@ export type Scan = {
   conf: number;
   votes: number;
   coverUrl: string;
+  matchStatus?: MatchStatus;
+  bandcampTrackId?: string;
 };
 
 export type ScanDetails = Pick<Scan, "title" | "artist" | "album" | "year">;
@@ -31,7 +33,7 @@ export type Candidate = {
 
 const LIB_KEY = "cutdeep-library";
 const LEGACY_KEY = "cutdeep-history";
-const MAX = 100;
+export const MIN_LIBRARY_OVERLAP = 0.1;
 
 function toScan(raw: unknown): Scan | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -60,10 +62,12 @@ function toScan(raw: unknown): Scan | null {
     conf: typeof r.conf === "number" ? r.conf : 0,
     votes: typeof r.votes === "number" ? r.votes : 0,
     coverUrl: typeof r.coverUrl === "string" && /^https?:\/\//i.test(r.coverUrl) ? r.coverUrl : "",
+    matchStatus: r.matchStatus === "likely" || r.matchStatus === "possible" ? r.matchStatus : undefined,
+    bandcampTrackId: typeof r.bandcampTrackId === "string" ? r.bandcampTrackId : undefined,
   };
 }
 
-export function loadScans(): Scan[] {
+function readScans(): Scan[] {
   const out: Scan[] = [];
   for (const key of [LIB_KEY, LEGACY_KEY]) {
     try {
@@ -79,7 +83,15 @@ export function loadScans(): Scan[] {
       /* A broken history entry should not hide the other store. */
     }
   }
-  return out.sort((a, b) => b.ts - a.ts).slice(0, MAX);
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+function qualifiesForLibrary(scan: Scan): boolean {
+  return scan.conf > MIN_LIBRARY_OVERLAP;
+}
+
+export function loadScans(): Scan[] {
+  return readScans().filter(qualifiesForLibrary);
 }
 
 function writeScans(scans: Scan[]) {
@@ -93,30 +105,29 @@ function scanIndex(scans: Scan[], original: Scan) {
 }
 
 export function removeScan(original: Scan): Scan[] {
-  const next = loadScans();
+  const next = readScans();
   const index = scanIndex(next, original);
   if (index !== -1) {
     next.splice(index, 1);
     writeScans(next);
   }
-  return next;
+  return next.filter(qualifiesForLibrary);
 }
 
 export function updateScan(original: Scan, details: ScanDetails): Scan[] {
-  const next = loadScans();
+  const next = readScans();
   const index = scanIndex(next, original);
   if (index === -1) throw new Error("This scan has changed. Reopen the scanned library to try again.");
   next[index] = { ...next[index], ...details };
   writeScans(next);
-  return next;
+  return next.filter(qualifiesForLibrary);
 }
 
-export function saveScan(scan: Scan): Scan[] {
-  const next = [scan, ...loadScans()].slice(0, MAX);
+export function saveScan(scan: Scan): boolean {
   try {
-    writeScans(next);
+    writeScans([scan, ...readScans()]);
+    return true;
   } catch {
-    /* storage full or unavailable; library just won't persist */
+    return false;
   }
-  return next;
 }
